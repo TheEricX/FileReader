@@ -1,0 +1,52 @@
+.app-container {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.main-content {
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  min-height: 0;
+}
+
+.excel-container {
+  flex: 1 1 60%;
+  min-width: 0;
+  overflow: auto;
+  padding: 0.5rem;
+}
+
+.chat-sidebar {
+  flex: 0 1 clamp(280px, 32vw, 420px);
+  min-width: 260px;
+  min-height: 0;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  font-size: 1.2rem;
+  color: #6b5f50;
+}
+
+@media (max-width: 1024px) {
+  .app-container {
+    padding: 16px;
+  }
+
+  .main-content {
+    flex-direction: column;
+  }
+
+  .chat-sidebar {
+    flex: none;
+    width: 100%;
+  }
+}
