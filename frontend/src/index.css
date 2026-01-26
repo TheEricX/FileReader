@@ -42,18 +42,46 @@ body {
 
 .rdg {
   height: 100%;
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  border: 0;
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: none;
 }
 
 .excel-viewer h2,
-.chat-header h2 {
+.chat-title {
   font-family: "Newsreader", "Times New Roman", serif;
   font-weight: 600;
   color: var(--text);
   margin: 0;
+}
+
+.excel-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.excel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.excel-grid {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  background: var(--surface);
 }
 
 .chat-container {
@@ -61,7 +89,7 @@ body {
   flex-direction: column;
   height: 100%;
   background: var(--surface);
-  border-radius: 18px;
+  border-radius: 10px;
   box-shadow: var(--shadow);
   border: 1px solid var(--border);
 }
@@ -71,17 +99,25 @@ body {
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 1rem;
+  gap: 0.5rem;
+  padding: 0.9rem 1rem 0.8rem;
   border-bottom: 1px solid var(--border);
+}
+
+.chat-title {
+  font-size: 1.1rem;
+  line-height: 1.2;
+  width: 100%;
 }
 
 .model-select {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0 1.25rem 1rem 1.25rem;
+  padding: 0;
   color: var(--text-muted);
   font-size: 0.875rem;
+  width: 100%;
 }
 
 .model-select select {
@@ -91,11 +127,14 @@ body {
   background-color: var(--surface-muted);
   color: var(--text);
   font-family: inherit;
+  min-width: 0;
 }
 
 .messages-container {
   flex-grow: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   padding: 1.25rem;
   background: var(--surface-muted);
 }
@@ -103,7 +142,7 @@ body {
 .message {
   margin-bottom: 0.9rem;
   padding: 0.7rem 1rem;
-  border-radius: 0.85rem;
+  border-radius: 8px;
   max-width: 80%;
   line-height: 1.4;
 }
@@ -132,7 +171,7 @@ body {
 .message-input input {
   flex-grow: 1;
   padding: 0.6rem 0.75rem;
-  border-radius: 999px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background-color: var(--surface-muted);
   color: var(--text);
@@ -141,7 +180,7 @@ body {
 
 .message-input button {
   padding: 0.55rem 0.9rem;
-  border-radius: 999px;
+  border-radius: 8px;
   background-color: var(--accent);
   color: white;
   border: none;
@@ -164,7 +203,7 @@ body {
   height: 100%;
   padding: 2.5rem;
   border: 2px dashed var(--border);
-  border-radius: 20px;
+  border-radius: 12px;
   background-color: var(--surface);
   box-shadow: var(--shadow);
   text-align: center;
@@ -197,11 +236,24 @@ body {
 .file-upload button {
   margin-top: 1.25rem;
   padding: 0.6rem 1.2rem;
-  border-radius: 999px;
+  border-radius: 8px;
   background-color: var(--accent);
   color: white;
   border: none;
   cursor: pointer;
+}
+
+.excel-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.excel-grid {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
 }
 
 .file-upload button:hover {

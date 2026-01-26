@@ -50,8 +50,10 @@ const ExcelViewer = ({ data, metadata }) => {
 
   return (
     <div className="excel-viewer">
-      <h2 className="text-xl font-bold mb-4">Excel Spreadsheet</h2>
-      <div style={{ height: 'calc(100vh - 100px)', width: '100%' }}>
+      <div className="excel-header">
+        <h2>Excel Spreadsheet</h2>
+      </div>
+      <div className="excel-grid">
         <DataGrid
           columns={columns}
           rows={rows}

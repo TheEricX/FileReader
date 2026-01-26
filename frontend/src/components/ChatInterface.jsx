@@ -25,7 +25,7 @@ const ChatInterface = ({ messages, onSendMessage, modelOptions, selectedModelId,
   return (
     <div className="chat-container">
       <div className="chat-header">
-        <h2 className="text-xl font-bold p-4 border-b border-gray-700">Excel Agent Chat</h2>
+        <h2 className="chat-title">Excel Agent Chat</h2>
         <div className="model-select">
           <label htmlFor="model-select">Model</label>
           <select
