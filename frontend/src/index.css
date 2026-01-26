@@ -236,6 +236,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
   background: var(--surface);
   border-radius: 10px;
   box-shadow: var(--shadow);
@@ -285,6 +286,41 @@ body {
   flex-direction: column;
   padding: 1.25rem;
   background: var(--surface-muted);
+  min-height: 160px;
+}
+
+.chat-input-area {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 120px;
+}
+
+.chat-resize-handle {
+  height: 10px;
+  cursor: row-resize;
+  position: relative;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-resize-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--border);
+  transform: translate(-50%, -50%);
+  transition: background-color 160ms ease, width 160ms ease;
+}
+
+.chat-resize-handle:hover::before {
+  background: var(--accent);
+  width: 52px;
 }
 
 .message {
@@ -314,18 +350,31 @@ body {
   border-top: 1px solid var(--border);
   background: var(--surface);
   gap: 0.5rem;
+  align-items: stretch;
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
 }
 
 .message-input textarea {
   flex-grow: 1;
   padding: 0.6rem 0.75rem;
-  border-radius: 8px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   background-color: var(--surface-muted);
   color: var(--text);
   font-family: inherit;
-  resize: vertical;
+  resize: none;
   min-height: 44px;
+  min-height: 0;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.message-input textarea:focus,
+.message-input textarea:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(214, 90, 49, 0.25);
 }
 
 .message-input button {
@@ -339,6 +388,7 @@ body {
   align-items: center;
   justify-content: center;
   min-width: 44px;
+  align-self: flex-start;
 }
 
 .message-input button:hover {

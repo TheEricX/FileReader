@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { FiSend } from 'react-icons/fi';
 
 const ChatInterface = ({
@@ -16,6 +16,13 @@ const ChatInterface = ({
 }) => {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const chatContainerRef = useRef(null);
+  const headerRef = useRef(null);
+  const resizeHandleRef = useRef(null);
+  const inputAreaRef = useRef(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const [messagesHeight, setMessagesHeight] = useState(null);
+  const [inputHeight, setInputHeight] = useState(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -26,6 +33,35 @@ const ChatInterface = ({
     if (focusToken === undefined) return;
     inputRef.current?.focus();
   }, [focusToken]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const handleMove = (e) => {
+      const container = chatContainerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const nextHeight = e.clientY - rect.top;
+      const headerHeight = headerRef.current?.getBoundingClientRect().height ?? 0;
+      const handleHeight = resizeHandleRef.current?.getBoundingClientRect().height ?? 0;
+      const available = rect.height - headerHeight - handleHeight;
+      const minMessages = 160;
+      const minInput = 120;
+      const maxMessages = Math.max(minMessages, available - minInput);
+      const clampedMessages = Math.min(Math.max(nextHeight - headerHeight, minMessages), maxMessages);
+      const nextInput = Math.max(minInput, available - clampedMessages);
+      setMessagesHeight(clampedMessages);
+      setInputHeight(nextInput);
+    };
+    const handleUp = () => setIsResizing(false);
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    window.addEventListener('mouseleave', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('mouseleave', handleUp);
+    };
+  }, [isResizing]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -46,8 +82,8 @@ const ChatInterface = ({
   };
 
   return (
-    <div className="chat-container">
-      <div className="chat-header">
+    <div className="chat-container" ref={chatContainerRef}>
+      <div className="chat-header" ref={headerRef}>
         <h2 className="chat-title">Excel Agent Chat</h2>
         <div className="model-select">
           <label htmlFor="model-select">Model</label>
@@ -65,7 +101,10 @@ const ChatInterface = ({
         </div>
       </div>
       
-      <div className="messages-container">
+      <div
+        className="messages-container"
+        style={messagesHeight ? { height: `${messagesHeight}px` } : undefined}
+      >
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
             <p>Start chatting with the Excel Agent</p>
@@ -82,32 +121,48 @@ const ChatInterface = ({
         )}
         <div ref={messagesEndRef} />
       </div>
-      
-      {selectionSummary && (
-        <div className="chat-reference-banner" aria-live="polite">
-          <span>Reference range {selectionSummary.rangeLabel}?</span>
-          <button type="button" onClick={onReferenceSelection}>
-            Reference
+      <div
+        className="chat-resize-handle"
+        role="separator"
+        aria-label="Resize chat panels"
+        ref={resizeHandleRef}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setIsResizing(true);
+        }}
+      />
+
+      <div
+        className="chat-input-area"
+        ref={inputAreaRef}
+        style={inputHeight ? { height: `${inputHeight}px` } : undefined}
+      >
+        {selectionSummary && (
+          <div className="chat-reference-banner" aria-live="polite">
+            <span>Reference range {selectionSummary.rangeLabel}?</span>
+            <button type="button" onClick={onReferenceSelection}>
+              Reference
+            </button>
+            <button type="button" onClick={onClearSelection}>
+              Dismiss
+            </button>
+          </div>
+        )}
+        <form onSubmit={handleSubmit} className="message-input">
+          <textarea
+            ref={inputRef}
+            value={inputValue}
+            onChange={(e) => onInputChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask about your Excel data..."
+            aria-label="Message input"
+            rows={2}
+          />
+          <button type="submit" aria-label="Send message">
+            <FiSend />
           </button>
-          <button type="button" onClick={onClearSelection}>
-            Dismiss
-          </button>
-        </div>
-      )}
-      <form onSubmit={handleSubmit} className="message-input">
-        <textarea
-          ref={inputRef}
-          value={inputValue}
-          onChange={(e) => onInputChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask about your Excel data..."
-          aria-label="Message input"
-          rows={2}
-        />
-        <button type="submit" aria-label="Send message">
-          <FiSend />
-        </button>
-      </form>
+        </form>
+      </div>
     </div>
   );
 };
