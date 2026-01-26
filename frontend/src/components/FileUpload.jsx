@@ -84,7 +84,7 @@ const FileUpload = ({ onFileUpload, loading, error }) => {
       <label htmlFor="file-input">
         <FiUpload />
         <h2>Upload Spreadsheet</h2>
-        <p>Drag & drop your spreadsheet file here or click to browse</p>
+        <p>Drag & drop your spreadsheet here or click to browse</p>
         <p className="supported-formats">
           Supported formats: XLSX, XLS, CSV, TSV, ODS and more
         </p>
