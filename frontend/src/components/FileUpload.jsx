@@ -36,6 +36,7 @@ const FileUpload = ({ onFileUpload, loading, error }) => {
     const file = event.target.files[0];
     if (file && isFileSupported(file)) {
       setSelectedFile(file);
+      onFileUpload(file);
     } else {
       setSelectedFile(null);
       alert(`Please select a valid spreadsheet file (${acceptedExtensions})`);
