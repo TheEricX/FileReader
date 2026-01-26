@@ -12,19 +12,65 @@
   flex: 1;
   gap: 12px;
   min-height: 0;
+  position: relative;
 }
 
 .excel-container {
-  flex: 1 1 60%;
+  flex: 0 0 auto;
   min-width: 0;
   overflow: auto;
-  padding: 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.resize-handle {
+  width: 8px;
+  margin: 0 -4px;
+  cursor: col-resize;
+  position: relative;
+}
+
+.resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 20px;
+  bottom: 20px;
+  left: 50%;
+  width: 2px;
+  background: var(--border);
+  transform: translateX(-50%);
+  border-radius: 999px;
+  transition: background-color 160ms ease, width 160ms ease;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 50%;
+  width: 10px;
+  transform: translateX(-50%);
+}
+
+.resize-handle:hover::before,
+.resize-handle:focus-visible::before {
+  background: var(--accent);
+  width: 3px;
+}
+
+.app-container.is-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .chat-sidebar {
-  flex: 0 1 clamp(280px, 32vw, 420px);
-  min-width: 260px;
+  flex: 1 1 auto;
+  min-width: 280px;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .loading {
@@ -43,6 +89,10 @@
 
   .main-content {
     flex-direction: column;
+  }
+
+  .resize-handle {
+    display: none;
   }
 
   .chat-sidebar {

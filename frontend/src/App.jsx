@@ -26,6 +26,8 @@ function App() {
   const [socket, setSocket] = useState(null);
   const [messages, setMessages] = useState([]);
   const [selectedModelId, setSelectedModelId] = useState(modelOptions[0].id);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(68);
+  const [isResizing, setIsResizing] = useState(false);
 
   // Initialize WebSocket connection when clientId is set
   useEffect(() => {
@@ -164,19 +166,55 @@ function App() {
     }));
   };
 
+  const handleResizeStart = (e) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleResize = (e) => {
+      const container = document.querySelector('.main-content');
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const nextWidth = ((e.clientX - rect.left) / rect.width) * 100;
+      const clampedWidth = Math.min(80, Math.max(40, nextWidth));
+      setLeftPanelWidth(clampedWidth);
+    };
+
+    const handleResizeEnd = () => setIsResizing(false);
+
+    window.addEventListener('mousemove', handleResize);
+    window.addEventListener('mouseup', handleResizeEnd);
+    window.addEventListener('mouseleave', handleResizeEnd);
+
+    return () => {
+      window.removeEventListener('mousemove', handleResize);
+      window.removeEventListener('mouseup', handleResizeEnd);
+      window.removeEventListener('mouseleave', handleResizeEnd);
+    };
+  }, [isResizing]);
+
   return (
-    <div className="app-container">
+    <div className={`app-container ${isResizing ? 'is-resizing' : ''}`}>
       {!clientId ? (
         <FileUpload onFileUpload={handleFileUpload} loading={loading} error={error} />
       ) : (
         <div className="main-content">
-          <div className="excel-container">
+          <div className="excel-container" style={{ flexBasis: `${leftPanelWidth}%` }}>
             {excelData ? (
               <ExcelViewer data={excelData.data} metadata={excelData.metadata} />
             ) : (
               <div className="loading">Loading Excel data...</div>
             )}
           </div>
+          <div
+            className="resize-handle"
+            role="separator"
+            aria-label="Resize panels"
+            onMouseDown={handleResizeStart}
+          />
           <div className="chat-sidebar">
             <ChatInterface 
               messages={messages} 
