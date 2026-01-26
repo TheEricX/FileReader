@@ -5,7 +5,9 @@ import 'react-data-grid/lib/styles.css';
 
 const ExcelViewer = ({ data, metadata, onBack }) => {
   const [columns, setColumns] = useState([]);
-  const [rows, setRows] = useState([]);
+  const [rawRows, setRawRows] = useState([]);
+  const [frozenRowCount, setFrozenRowCount] = useState(0);
+  const [frozenColumnCount, setFrozenColumnCount] = useState(0);
 
   useEffect(() => {
     if (!data || !metadata) return;
@@ -14,10 +16,25 @@ const ExcelViewer = ({ data, metadata, onBack }) => {
     const cols = Array.from({ length: metadata.columns }, (_, i) => ({
       key: i.toString(),
       name: getExcelColumnName(i),
+      frozen: i < frozenColumnCount,
       resizable: true,
       sortable: true,
-      width: 120
+      width: 120,
+      renderSummaryCell: ({ row }) => row?.[i.toString()] ?? ''
     }));
+
+    const rowNumberColumn = {
+      key: '__rowNumber',
+      name: '#',
+      frozen: frozenColumnCount > 0,
+      resizable: false,
+      sortable: false,
+      width: 56,
+      headerCellClass: 'row-number-header',
+      cellClass: 'row-number-cell',
+      renderCell: ({ row }) => row?.id + 1,
+      renderSummaryCell: ({ row }) => row?.id + 1
+    };
     
     // Transform data into rows format expected by react-data-grid
     const formattedRows = data.map((row, rowIndex) => {
@@ -27,9 +44,15 @@ const ExcelViewer = ({ data, metadata, onBack }) => {
       };
     });
 
-    setColumns(cols);
-    setRows(formattedRows);
-  }, [data, metadata]);
+    setColumns([rowNumberColumn, ...cols]);
+    setRawRows(formattedRows);
+  }, [data, metadata, frozenColumnCount]);
+
+  useEffect(() => {
+    if (!metadata) return;
+    setFrozenRowCount((value) => Math.min(value, Math.min(10, rawRows.length)));
+    setFrozenColumnCount((value) => Math.min(value, Math.min(10, metadata.columns)));
+  }, [rawRows.length, metadata]);
 
   // Convert column index to Excel column name (A, B, C, ..., Z, AA, AB, etc.)
   const getExcelColumnName = (index) => {
@@ -49,19 +72,58 @@ const ExcelViewer = ({ data, metadata, onBack }) => {
     return <div>Loading Excel data...</div>;
   }
 
+  const topSummaryRows = frozenRowCount > 0 ? rawRows.slice(0, frozenRowCount) : undefined;
+  const rows = frozenRowCount > 0 ? rawRows.slice(frozenRowCount) : rawRows;
+
+  const maxFrozenRows = Math.min(10, rawRows.length);
+  const maxFrozenColumns = Math.min(10, metadata.columns);
+
   return (
     <div className="excel-viewer">
       <div className="excel-header">
-        <button type="button" className="back-button" onClick={onBack} aria-label="Back to upload">
-          <FiArrowLeft />
-        </button>
-        <h2>Excel Spreadsheet</h2>
+        <div className="excel-title-group">
+          <button type="button" className="back-button" onClick={onBack} aria-label="Back to upload">
+            <FiArrowLeft />
+          </button>
+          <h2>Excel Spreadsheet</h2>
+        </div>
+        <div className="excel-controls">
+          <label className="excel-control-select">
+            <span>Freeze Rows</span>
+            <select
+              value={frozenRowCount}
+              onChange={(event) => setFrozenRowCount(Number(event.target.value))}
+            >
+              {Array.from({ length: maxFrozenRows + 1 }, (_, i) => (
+                <option key={`freeze-rows-${i}`} value={i}>
+                  {i}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="excel-control-select">
+            <span>Freeze Columns</span>
+            <select
+              value={frozenColumnCount}
+              onChange={(event) => setFrozenColumnCount(Number(event.target.value))}
+            >
+              {Array.from({ length: maxFrozenColumns + 1 }, (_, i) => (
+                <option key={`freeze-cols-${i}`} value={i}>
+                  {i}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
       <div className="excel-grid">
         <DataGrid
           columns={columns}
           rows={rows}
           rowHeight={35}
+          summaryRowHeight={35}
+          topSummaryRows={topSummaryRows}
+          rowKeyGetter={(row) => row.id}
           className="rdg-light"
         />
       </div>
