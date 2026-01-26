@@ -57,10 +57,16 @@ const FileUpload = ({ onFileUpload, loading, error }) => {
   };
 
   const handleUpload = () => {
-    if (selectedFile) {
-      onFileUpload(selectedFile);
+    if (!selectedFile) {
+      fileInputRef.current?.click();
+      return;
     }
+    onFileUpload(selectedFile);
   };
+
+  const uploadButtonLabel = loading
+    ? 'Uploading...'
+    : (selectedFile ? 'Upload' : 'Choose File');
 
   return (
     <div 
@@ -89,9 +95,9 @@ const FileUpload = ({ onFileUpload, loading, error }) => {
       {error && <p className="error">{error}</p>}
       <button 
         onClick={handleUpload} 
-        disabled={!selectedFile || loading}
+        disabled={loading}
       >
-        {loading ? 'Uploading...' : 'Upload'}
+        {uploadButtonLabel}
       </button>
     </div>
   );
