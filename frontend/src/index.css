@@ -71,10 +71,37 @@ body {
 .excel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 0.75rem;
   padding: 0.9rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+}
+
+.back-button {
+  appearance: none;
+  border: none;
+  border-radius: 14px;
+  background: var(--accent);
+  color: white;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 20px rgba(214, 90, 49, 0.2);
+  cursor: pointer;
+  transition: background-color 160ms ease, transform 160ms ease;
+}
+
+.back-button:hover {
+  background-color: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+.back-button svg {
+  width: 18px;
+  height: 18px;
 }
 
 .excel-grid {
@@ -200,7 +227,8 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  width: min(820px, 100%);
+  min-height: 360px;
   padding: 2.5rem;
   border: 2px dashed var(--border);
   border-radius: 12px;

@@ -28,6 +28,27 @@ function App() {
   const [selectedModelId, setSelectedModelId] = useState(modelOptions[0].id);
   const [leftPanelWidth, setLeftPanelWidth] = useState(68);
   const [isResizing, setIsResizing] = useState(false);
+  const [selectedMode, setSelectedMode] = useState('spreadsheet');
+
+  const uploadModes = [
+    {
+      id: 'spreadsheet',
+      label: 'Spreadsheet',
+      hint: 'XLSX, XLS, CSV, TSV, ODS',
+    },
+    {
+      id: 'pdf',
+      label: 'PDF',
+      hint: 'PDF documents',
+      comingSoon: true,
+    },
+    {
+      id: 'doc',
+      label: 'DOC',
+      hint: 'Word documents',
+      comingSoon: true,
+    },
+  ];
 
   // Initialize WebSocket connection when clientId is set
   useEffect(() => {
@@ -166,6 +187,18 @@ function App() {
     }));
   };
 
+  const handleBackToUpload = () => {
+    if (socket) {
+      socket.close();
+    }
+    setSocket(null);
+    setClientId(null);
+    setExcelData(null);
+    setMessages([]);
+    setError(null);
+    setSelectedMode('spreadsheet');
+  };
+
   const handleResizeStart = (e) => {
     e.preventDefault();
     setIsResizing(true);
@@ -199,12 +232,45 @@ function App() {
   return (
     <div className={`app-container ${isResizing ? 'is-resizing' : ''}`}>
       {!clientId ? (
-        <FileUpload onFileUpload={handleFileUpload} loading={loading} error={error} />
+        <div className="upload-shell">
+          <aside className="side-nav" aria-label="Upload modes">
+            <h3>Upload Modes</h3>
+            <div className="nav-items">
+              {uploadModes.map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  className={selectedMode === mode.id ? 'active' : ''}
+                  onClick={() => setSelectedMode(mode.id)}
+                >
+                  <span>{mode.label}</span>
+                  <small>{mode.hint}</small>
+                  {mode.comingSoon && <em>Coming soon</em>}
+                </button>
+              ))}
+            </div>
+          </aside>
+          <div className="upload-content">
+            {selectedMode === 'spreadsheet' ? (
+              <FileUpload onFileUpload={handleFileUpload} loading={loading} error={error} />
+            ) : (
+              <div className="mode-placeholder">
+                <h2>{uploadModes.find((mode) => mode.id === selectedMode)?.label}</h2>
+                <p>This upload type is not available yet.</p>
+                <p>Select Spreadsheet to continue.</p>
+              </div>
+            )}
+          </div>
+        </div>
       ) : (
         <div className="main-content">
           <div className="excel-container" style={{ flexBasis: `${leftPanelWidth}%` }}>
             {excelData ? (
-              <ExcelViewer data={excelData.data} metadata={excelData.metadata} />
+              <ExcelViewer
+                data={excelData.data}
+                metadata={excelData.metadata}
+                onBack={handleBackToUpload}
+              />
             ) : (
               <div className="loading">Loading Excel data...</div>
             )}

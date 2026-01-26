@@ -7,6 +7,108 @@
   box-sizing: border-box;
 }
 
+.upload-shell {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.side-nav {
+  width: 240px;
+  flex: 0 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.side-nav h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.nav-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nav-items button {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--surface-muted);
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text);
+}
+
+.nav-items button small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.nav-items button em {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--accent-strong);
+}
+
+.nav-items button.active {
+  border-color: var(--accent);
+  background: var(--surface-strong);
+  box-shadow: 0 10px 20px rgba(214, 90, 49, 0.12);
+}
+
+.nav-items button:hover {
+  border-color: var(--border);
+}
+
+.upload-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mode-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.mode-placeholder h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  color: var(--text);
+}
+
+.mode-placeholder p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
 .main-content {
   display: flex;
   flex: 1;
@@ -85,6 +187,14 @@
 @media (max-width: 1024px) {
   .app-container {
     padding: 16px;
+  }
+
+  .upload-shell {
+    flex-direction: column;
+  }
+
+  .side-nav {
+    width: 100%;
   }
 
   .main-content {

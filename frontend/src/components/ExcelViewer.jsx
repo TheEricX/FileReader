@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { FiArrowLeft } from 'react-icons/fi';
 import { DataGrid } from 'react-data-grid';
 import 'react-data-grid/lib/styles.css';
 
-const ExcelViewer = ({ data, metadata }) => {
+const ExcelViewer = ({ data, metadata, onBack }) => {
   const [columns, setColumns] = useState([]);
   const [rows, setRows] = useState([]);
 
@@ -51,6 +52,9 @@ const ExcelViewer = ({ data, metadata }) => {
   return (
     <div className="excel-viewer">
       <div className="excel-header">
+        <button type="button" className="back-button" onClick={onBack} aria-label="Back to upload">
+          <FiArrowLeft />
+        </button>
         <h2>Excel Spreadsheet</h2>
       </div>
       <div className="excel-grid">
