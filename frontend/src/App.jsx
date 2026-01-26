@@ -29,6 +29,10 @@ function App() {
   const [leftPanelWidth, setLeftPanelWidth] = useState(68);
   const [isResizing, setIsResizing] = useState(false);
   const [selectedMode, setSelectedMode] = useState('spreadsheet');
+  const [chatDraft, setChatDraft] = useState('');
+  const [focusInputToken, setFocusInputToken] = useState(0);
+  const [selectionSummary, setSelectionSummary] = useState(null);
+  const [clearSelectionToken, setClearSelectionToken] = useState(0);
 
   const uploadModes = [
     {
@@ -187,6 +191,37 @@ function App() {
     }));
   };
 
+  const handleInsertReference = (text) => {
+    setChatDraft((prev) => {
+      if (!prev) return text;
+      const separator = prev.endsWith('\n') ? '' : '\n';
+      return `${prev}${separator}${text}`;
+    });
+    setFocusInputToken((value) => value + 1);
+  };
+
+  const buildReferenceText = (summary) => {
+    if (!summary) return '';
+    const rowsLabel = summary.minRow === summary.maxRow
+      ? `${summary.minRow + 1}`
+      : `${summary.minRow + 1}-${summary.maxRow + 1}`;
+    const colsLabel = summary.minCol === summary.maxCol
+      ? `${summary.startCell.replace(/\d+/g, '')}`
+      : `${summary.startCell.replace(/\d+/g, '')}-${summary.endCell.replace(/\d+/g, '')}`;
+    return `Reference range ${summary.rangeLabel} (rows ${rowsLabel}, columns ${colsLabel})`;
+  };
+
+  const handleReferenceSelection = () => {
+    if (!selectionSummary) return;
+    const text = buildReferenceText(selectionSummary);
+    handleInsertReference(text);
+  };
+
+  const handleClearSelection = () => {
+    setSelectionSummary(null);
+    setClearSelectionToken((value) => value + 1);
+  };
+
   const handleBackToUpload = () => {
     if (socket) {
       socket.close();
@@ -270,6 +305,8 @@ function App() {
                 data={excelData.data}
                 metadata={excelData.metadata}
                 onBack={handleBackToUpload}
+                onSelectionSummaryChange={setSelectionSummary}
+                clearSelectionToken={clearSelectionToken}
               />
             ) : (
               <div className="loading">Loading Excel data...</div>
@@ -288,6 +325,12 @@ function App() {
               modelOptions={modelOptions}
               selectedModelId={selectedModelId}
               onModelChange={setSelectedModelId}
+              inputValue={chatDraft}
+              onInputChange={setChatDraft}
+              focusToken={focusInputToken}
+              selectionSummary={selectionSummary}
+              onReferenceSelection={handleReferenceSelection}
+              onClearSelection={handleClearSelection}
             />
           </div>
         </div>

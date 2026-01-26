@@ -66,6 +66,7 @@ body {
   border-radius: 10px;
   box-shadow: var(--shadow);
   overflow: hidden;
+  position: relative;
 }
 
 .excel-header {
@@ -141,6 +142,51 @@ body {
 .excel-control-select select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.chat-reference-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  margin: 0 0 0.6rem 0;
+  border-radius: 999px;
+  background: rgba(33, 135, 75, 0.12);
+  border: 1px solid rgba(33, 135, 75, 0.3);
+  color: #1f6f3d;
+  font-size: 0.8rem;
+}
+
+.chat-reference-banner button {
+  appearance: none;
+  border: 1px solid rgba(33, 135, 75, 0.4);
+  background: white;
+  color: #1f6f3d;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.chat-reference-banner button:hover {
+  background: rgba(33, 135, 75, 0.08);
+}
+
+.excel-cell-content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  user-select: none;
+}
+
+.excel-selection-cell {
+  background: rgba(46, 160, 67, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(46, 160, 67, 0.45);
+}
+
+.excel-grid {
+  user-select: none;
 }
 
 .row-number-header {
@@ -270,7 +316,7 @@ body {
   gap: 0.5rem;
 }
 
-.message-input input {
+.message-input textarea {
   flex-grow: 1;
   padding: 0.6rem 0.75rem;
   border-radius: 8px;
@@ -278,6 +324,8 @@ body {
   background-color: var(--surface-muted);
   color: var(--text);
   font-family: inherit;
+  resize: vertical;
+  min-height: 44px;
 }
 
 .message-input button {
