@@ -239,12 +239,6 @@ function App() {
     }
   };
 
-  const clearUploadHistory = async () => {
-    const entries = [...uploadHistory];
-    for (const entry of entries) {
-      await removeUploadHistory(entry.clientId);
-    }
-  };
 
   const openUploadSession = async (entry) => {
     if (socket) {
@@ -575,36 +569,9 @@ function App() {
                   >
                     Manage
                   </button>
-                  {uploadHistory.length > 0 && (
-                    <button type="button" onClick={clearUploadHistory}>
-                      Clear All
-                    </button>
-                  )}
                 </div>
               </div>
-              {uploadHistory.length === 0 ? (
-                <p>No uploads yet.</p>
-              ) : (
-                <ul className="upload-history-list">
-                  {uploadHistory.map((entry) => (
-                    <li key={entry.clientId}>
-                      <div className="upload-history-main">
-                        <span className={`upload-type ${entry.type}`}>{entry.type}</span>
-                        <strong>{entry.filename}</strong>
-                      </div>
-                      <span className="upload-time">{formatUploadTime(entry.uploadedAt)}</span>
-                      <div className="upload-actions">
-                        <button type="button" onClick={() => openUploadSession(entry)}>
-                          Open
-                        </button>
-                        <button type="button" onClick={() => removeUploadHistory(entry.clientId)}>
-                          Remove
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <p>{uploadHistory.length} uploads</p>
             </div>
             <button
               type="button"
@@ -791,7 +758,7 @@ function App() {
                 </div>
               </div>
               <div className="upload-manager-meta">
-                Showing {filteredUploads.length} of {uploadHistory.length}
+                {uploadHistory.length} uploads total. Showing {filteredUploads.length}.
               </div>
               {filteredUploads.length === 0 ? (
                 <div className="upload-manager-empty">No uploads match your search.</div>
