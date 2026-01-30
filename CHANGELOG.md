@@ -14,3 +14,11 @@ The format is based on Keep a Changelog, and this project follows a date-based v
 ### Changed
 - Chat input: multi-line input with Enter to send and Shift+Enter for newline.
 - UI: selection highlight styling and input layout adjustments.
+
+## [2026-01-30]
+### Added
+- PDF upload mode with viewer and chat analysis.
+- Upload manager with search, filters, sorting, and recent uploads list.
+- Model settings panel with per-model parameters and reset to defaults.
+### Changed
+- Chat messages preserve line breaks for structured responses.

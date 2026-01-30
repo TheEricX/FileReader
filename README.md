@@ -25,6 +25,10 @@ Create `backend/.env` with at least:
 ```
 OPENAI_API_KEY=your_key_here
 ```
+Optional if using Bedrock:
+```
+AWS_REGION=us-east-1
+```
 
 ## Frontend setup
 ```bash
@@ -37,8 +41,10 @@ The frontend runs at `http://localhost:3000` and the API at `http://localhost:80
 
 ## Usage
 1. Start backend and frontend.
-2. Upload a spreadsheet (XLSX, XLS, CSV, TSV, ODS).
+2. Upload a spreadsheet (XLSX, XLS, CSV, TSV, ODS) or a PDF.
 3. Ask questions or request edits in the chat.
+4. Use **Settings** to configure model parameters per model.
+5. Use **Recent Uploads** to reopen or manage previous uploads.
 
 ## Notes
 - Uploaded files are stored in `backend/uploads/` (ignored by git).
