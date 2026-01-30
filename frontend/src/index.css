@@ -49,6 +49,7 @@ body {
 }
 
 .excel-viewer h2,
+.pdf-viewer h2,
 .chat-title {
   font-family: "Newsreader", "Times New Roman", serif;
   font-weight: 600;
@@ -67,6 +68,53 @@ body {
   box-shadow: var(--shadow);
   overflow: hidden;
   position: relative;
+}
+
+.pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.pdf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.pdf-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pdf-filename {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.pdf-frame {
+  flex: 1;
+  min-height: 0;
+  background: var(--surface-muted);
+  display: flex;
+}
+
+.pdf-frame iframe {
+  border: none;
+  width: 100%;
+  height: 100%;
 }
 
 .excel-header {
@@ -329,6 +377,8 @@ body {
   border-radius: 8px;
   max-width: 80%;
   line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .user-message {

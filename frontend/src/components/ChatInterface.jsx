@@ -10,6 +10,9 @@ const ChatInterface = ({
   inputValue,
   onInputChange,
   focusToken,
+  title = 'Excel Agent Chat',
+  placeholder = 'Ask about your Excel data...',
+  emptyStateText = 'Start chatting with the Excel Agent',
   selectionSummary,
   onReferenceSelection,
   onClearSelection
@@ -84,7 +87,7 @@ const ChatInterface = ({
   return (
     <div className="chat-container" ref={chatContainerRef}>
       <div className="chat-header" ref={headerRef}>
-        <h2 className="chat-title">Excel Agent Chat</h2>
+        <h2 className="chat-title">{title}</h2>
         <div className="model-select">
           <label htmlFor="model-select">Model</label>
           <select
@@ -107,7 +110,7 @@ const ChatInterface = ({
       >
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
-            <p>Start chatting with the Excel Agent</p>
+            <p>{emptyStateText}</p>
           </div>
         ) : (
           messages.map((msg, index) => (
@@ -154,7 +157,7 @@ const ChatInterface = ({
             value={inputValue}
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about your Excel data..."
+            placeholder={placeholder}
             aria-label="Message input"
             rows={2}
           />

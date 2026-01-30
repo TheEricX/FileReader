@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import FileUpload from './components/FileUpload';
+import PdfUpload from './components/PdfUpload';
 import ExcelViewer from './components/ExcelViewer';
+import PdfViewer from './components/PdfViewer';
 import ChatInterface from './components/ChatInterface';
 import './App.css';
 
@@ -29,6 +31,9 @@ function App() {
   const [leftPanelWidth, setLeftPanelWidth] = useState(68);
   const [isResizing, setIsResizing] = useState(false);
   const [selectedMode, setSelectedMode] = useState('spreadsheet');
+  const [sessionMode, setSessionMode] = useState(null);
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [pdfFilename, setPdfFilename] = useState('');
   const [chatDraft, setChatDraft] = useState('');
   const [focusInputToken, setFocusInputToken] = useState(0);
   const [selectionSummary, setSelectionSummary] = useState(null);
@@ -44,7 +49,6 @@ function App() {
       id: 'pdf',
       label: 'PDF',
       hint: 'PDF documents',
-      comingSoon: true,
     },
     {
       id: 'doc',
@@ -56,10 +60,13 @@ function App() {
 
   // Initialize WebSocket connection when clientId is set
   useEffect(() => {
-    if (!clientId) return;
+    if (!clientId || !sessionMode) return;
 
     // For WebSocket connections, we still need to use the full URL
-    const ws = new WebSocket(`ws://localhost:8000/ws/${clientId}`);
+    const wsUrl = sessionMode === 'pdf'
+      ? `ws://localhost:8000/ws/pdf/${clientId}`
+      : `ws://localhost:8000/ws/${clientId}`;
+    const ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
       console.log('WebSocket connected');
@@ -68,7 +75,7 @@ function App() {
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       
-      if (data.type === 'excel_update') {
+      if (data.type === 'excel_update' && sessionMode === 'spreadsheet') {
         // Update Excel data when changes are made
         setExcelData({
           data: data.data,
@@ -82,7 +89,7 @@ function App() {
         }]);
         
         // If Excel was modified, fetch the latest data
-        if (data.excel_modified) {
+        if (data.excel_modified && sessionMode === 'spreadsheet') {
           fetchExcelData();
         }
       }
@@ -100,7 +107,9 @@ function App() {
     setSocket(ws);
     
     // Fetch initial Excel data
-    fetchExcelData();
+    if (sessionMode === 'spreadsheet') {
+      fetchExcelData();
+    }
     
     // Clean up WebSocket connection on component unmount
     return () => {
@@ -108,7 +117,7 @@ function App() {
         ws.close();
       }
     };
-  }, [clientId]);
+  }, [clientId, sessionMode]);
 
   const fetchExcelData = async () => {
     try {
@@ -124,7 +133,7 @@ function App() {
     }
   };
 
-  const handleFileUpload = async (file) => {
+  const handleSpreadsheetUpload = async (file) => {
     console.log('Uploading file:', file.name);
     setLoading(true);
     setError(null);
@@ -161,9 +170,59 @@ function App() {
       const data = await response.json();
       console.log('Upload successful, client ID:', data.client_id);
       setClientId(data.client_id);
+      setSessionMode('spreadsheet');
+      setSelectionSummary(null);
     } catch (error) {
       console.error('Error uploading file:', error);
       setError(error?.message || 'Failed to upload file. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePdfUpload = async (file) => {
+    console.log('Uploading PDF:', file.name);
+    setLoading(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch('http://localhost:8000/upload/pdf', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Failed to upload PDF. Please try again.';
+        try {
+          const errorData = await response.json();
+          if (errorData && errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (parseError) {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        }
+        console.error('Error response:', errorMessage);
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      console.log('PDF upload successful, client ID:', data.client_id);
+      setClientId(data.client_id);
+      setSessionMode('pdf');
+      setSelectionSummary(null);
+      setPdfFilename(data.filename || file.name);
+      if (data.file_url) {
+        setPdfUrl(`http://localhost:8000${data.file_url}`);
+      }
+    } catch (error) {
+      console.error('Error uploading PDF:', error);
+      setError(error?.message || 'Failed to upload PDF. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -231,6 +290,10 @@ function App() {
     setExcelData(null);
     setMessages([]);
     setError(null);
+    setSessionMode(null);
+    setPdfUrl(null);
+    setPdfFilename('');
+    setSelectionSummary(null);
     setSelectedMode('spreadsheet');
   };
 
@@ -287,7 +350,9 @@ function App() {
           </aside>
           <div className="upload-content">
             {selectedMode === 'spreadsheet' ? (
-              <FileUpload onFileUpload={handleFileUpload} loading={loading} error={error} />
+              <FileUpload onFileUpload={handleSpreadsheetUpload} loading={loading} error={error} />
+            ) : selectedMode === 'pdf' ? (
+              <PdfUpload onFileUpload={handlePdfUpload} loading={loading} error={error} />
             ) : (
               <div className="mode-placeholder">
                 <h2>{uploadModes.find((mode) => mode.id === selectedMode)?.label}</h2>
@@ -300,16 +365,24 @@ function App() {
       ) : (
         <div className="main-content">
           <div className="excel-container" style={{ flexBasis: `${leftPanelWidth}%` }}>
-            {excelData ? (
-              <ExcelViewer
-                data={excelData.data}
-                metadata={excelData.metadata}
-                onBack={handleBackToUpload}
-                onSelectionSummaryChange={setSelectionSummary}
-                clearSelectionToken={clearSelectionToken}
-              />
+            {sessionMode === 'spreadsheet' ? (
+              excelData ? (
+                <ExcelViewer
+                  data={excelData.data}
+                  metadata={excelData.metadata}
+                  onBack={handleBackToUpload}
+                  onSelectionSummaryChange={setSelectionSummary}
+                  clearSelectionToken={clearSelectionToken}
+                />
+              ) : (
+                <div className="loading">Loading Excel data...</div>
+              )
             ) : (
-              <div className="loading">Loading Excel data...</div>
+              <PdfViewer
+                pdfUrl={pdfUrl}
+                filename={pdfFilename}
+                onBack={handleBackToUpload}
+              />
             )}
           </div>
           <div
@@ -328,7 +401,13 @@ function App() {
               inputValue={chatDraft}
               onInputChange={setChatDraft}
               focusToken={focusInputToken}
-              selectionSummary={selectionSummary}
+              title={sessionMode === 'pdf' ? 'PDF Analyst Chat' : 'Excel Agent Chat'}
+              placeholder={sessionMode === 'pdf' ? 'Ask about your PDF...' : 'Ask about your Excel data...'}
+              emptyStateText={sessionMode === 'pdf'
+                ? 'Start chatting with the PDF analyst'
+                : 'Start chatting with the Excel Agent'
+              }
+              selectionSummary={sessionMode === 'spreadsheet' ? selectionSummary : null}
               onReferenceSelection={handleReferenceSelection}
               onClearSelection={handleClearSelection}
             />

@@ -5,12 +5,14 @@ import pandas as pd
 from typing import Dict
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
 from dotenv import load_dotenv
 
 from .excel_utils import ExcelUtils
 from .agent import ExcelAgent
+from .pdf_agent import PdfAgent
+from .pdf_utils import extract_pdf_text
 
 load_dotenv()
 
@@ -31,9 +33,11 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Store active connections and their associated Excel files
 active_connections: Dict[str, Dict] = {}
+active_pdf_connections: Dict[str, Dict] = {}
 
 # Initialize the Excel agent
 excel_agent = ExcelAgent()
+pdf_agent = PdfAgent()
 
 class ConnectionManager:
     def __init__(self):
@@ -121,9 +125,9 @@ async def upload_excel(file: UploadFile = File(...)):
         After inserting a row or column, always re-evaluate the sheet before updating it.
         Make sure the inserted index exists before trying to write to it.
         When inserting a total row, always find the last filled row index using tools. Never hardcode the index.
+        Format responses clearly with short sections, blank lines between sections, and bullet points when listing items.
 
-        
-        Here's a preview of top 5 rows of the spreadsheet data structure it might contains header if not you can figure it out based on data: 
+        Here's a preview of top 5 rows of the spreadsheet data structure it might contains header if not you can figure it out based on data:
         {df_head_str}
 
         The spreadsheet contains data in the range {data_range} ({num_rows} rows × {num_cols} columns).
@@ -140,6 +144,70 @@ async def upload_excel(file: UploadFile = File(...)):
         return {"client_id": client_id}
     except Exception as e:
         error_msg = f"Error in upload_excel: {str(e)}"
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"error": error_msg})
+
+@app.post("/upload/pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    """Upload a PDF file and return a client ID for WebSocket connection"""
+    print(f"Received PDF upload: {file.filename}")
+
+    try:
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        if file_extension != ".pdf":
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Unsupported file format. Only .pdf files are supported."}
+            )
+
+        client_id = str(uuid.uuid4())
+        print(f"Generated PDF client ID: {client_id}")
+
+        file_path = os.path.join(UPLOAD_DIR, f"{client_id}{file_extension}")
+        print(f"Saving PDF to: {file_path}")
+
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            print(f"Read {len(content)} bytes from PDF")
+            if not content:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Uploaded PDF is empty."}
+                )
+            buffer.write(content)
+
+        pdf_text = extract_pdf_text(file_path)
+        if not pdf_text.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Failed to extract text from the PDF."}
+            )
+
+        system_message = (
+            "You are a helpful PDF analysis assistant. "
+            "Answer questions using the provided PDF content. "
+            "If the answer is not in the PDF, say you could not find it. "
+            "Format responses clearly with short sections, blank lines between sections, and bullet points when listing items.\n\n"
+            f"PDF filename: {file.filename}\n\n"
+            f"PDF content (truncated):\n{pdf_text}"
+        )
+
+        active_pdf_connections[client_id] = {
+            "file_path": file_path,
+            "filename": file.filename,
+            "message_history": [
+                {"role": "system", "content": system_message}
+            ]
+        }
+
+        print("PDF upload successful")
+        return {
+            "client_id": client_id,
+            "file_url": f"/pdf/{client_id}/file",
+            "filename": file.filename
+        }
+    except Exception as e:
+        error_msg = f"Error in upload_pdf: {str(e)}"
         print(error_msg)
         return JSONResponse(status_code=500, content={"error": error_msg})
 
@@ -294,6 +362,68 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 )
     
     except WebSocketDisconnect:
+        manager.disconnect(client_id)
+
+@app.get("/pdf/{client_id}/file")
+async def get_pdf_file(client_id: str):
+    if client_id not in active_pdf_connections:
+        return JSONResponse(status_code=404, content={"error": "PDF client not found"})
+    file_path = active_pdf_connections[client_id]["file_path"]
+    if not os.path.exists(file_path):
+        return JSONResponse(status_code=404, content={"error": "PDF file not found"})
+    return FileResponse(file_path, media_type="application/pdf")
+
+@app.websocket("/ws/pdf/{client_id}")
+async def pdf_websocket_endpoint(websocket: WebSocket, client_id: str):
+    """WebSocket endpoint for real-time communication with the PDF agent"""
+    if client_id not in active_pdf_connections:
+        await websocket.close(code=1000, reason="Client not found")
+        return
+
+    await manager.connect(websocket, client_id)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message_data = json.loads(data)
+            user_message = message_data.get("message", "")
+            model_provider = message_data.get("model_provider", "openai")
+            model_id = message_data.get("model_id")
+            if model_provider not in {"openai", "bedrock"}:
+                model_provider = "openai"
+
+            active_pdf_connections[client_id]["message_history"].append(
+                {"role": "user", "content": user_message}
+            )
+
+            message_history = active_pdf_connections[client_id]["message_history"]
+
+            try:
+                response = pdf_agent.call_agent(
+                    message_history,
+                    model_provider,
+                    model_id
+                )
+
+                active_pdf_connections[client_id]["message_history"].append(
+                    {"role": "assistant", "content": response}
+                )
+
+                await manager.send_message(
+                    client_id,
+                    json.dumps({"response": response})
+                )
+            except Exception as e:
+                print(f"Error in PDF agent processing: {str(e)}")
+                await manager.send_message(
+                    client_id,
+                    json.dumps({"response": f"Error processing request: {str(e)}"})
+                )
+
+    except WebSocketDisconnect:
+        manager.disconnect(client_id)
+    except Exception as e:
+        print(f"Error: {str(e)}")
         manager.disconnect(client_id)
     except Exception as e:
         print(f"Error: {str(e)}")

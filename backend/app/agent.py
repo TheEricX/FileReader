@@ -240,7 +240,8 @@ class ExcelAgent:
                 model=model_id or "gpt-4o",
                 messages=all_messages,
                 tools=self.tools,
-                tool_choice="auto"
+                tool_choice="auto",
+                max_tokens=2048
             )
             msg = response.choices[0].message
 
@@ -326,7 +327,7 @@ class ExcelAgent:
             body = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "messages": messages,
-                "max_tokens": 1024,
+                "max_tokens": 2048,
                 "temperature": 0.2,
                 "tools": tools
             }
