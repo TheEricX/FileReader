@@ -136,26 +136,27 @@ function App() {
   }, [clientId, sessionMode]);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('excelFlowUploads');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          setUploadHistory(parsed);
+    const loadUploads = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/uploads');
+        if (!response.ok) {
+          throw new Error('Failed to load upload history');
         }
+        const data = await response.json();
+        const uploads = Array.isArray(data.uploads) ? data.uploads : [];
+        setUploadHistory(uploads.map((entry) => ({
+          clientId: entry.client_id,
+          filename: entry.filename || 'Untitled',
+          type: entry.type,
+          fileUrl: entry.file_url ? `http://localhost:8000${entry.file_url}` : null,
+          uploadedAt: entry.uploaded_at
+        })));
+      } catch (error) {
+        console.warn('Failed to load upload history', error);
       }
-    } catch (error) {
-      console.warn('Failed to load upload history', error);
-    }
+    };
+    loadUploads();
   }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('excelFlowUploads', JSON.stringify(uploadHistory));
-    } catch (error) {
-      console.warn('Failed to persist upload history', error);
-    }
-  }, [uploadHistory]);
 
   useEffect(() => {
     try {
@@ -196,15 +197,56 @@ function App() {
     });
   };
 
-  const removeUploadHistory = (clientIdToRemove) => {
-    setUploadHistory((prev) => prev.filter((item) => item.clientId !== clientIdToRemove));
+  const fetchSessionMessages = async (clientIdToLoad) => {
+    try {
+      const response = await fetch(`http://localhost:8000/sessions/${clientIdToLoad}`);
+      if (!response.ok) {
+        return [];
+      }
+      const data = await response.json();
+      if (!Array.isArray(data.messages)) return [];
+      return data.messages.filter((msg) => msg.role !== 'system');
+    } catch (error) {
+      console.warn('Failed to load session messages', error);
+      return [];
+    }
   };
 
-  const clearUploadHistory = () => {
-    setUploadHistory([]);
+  const removeUploadHistory = async (clientIdToRemove) => {
+    try {
+      const response = await fetch(`http://localhost:8000/uploads/${clientIdToRemove}`, {
+        method: 'DELETE'
+      });
+      if (!response.ok && response.status !== 404) {
+        let errorMessage = 'Failed to delete upload.';
+        try {
+          const errorData = await response.json();
+          if (errorData && errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (parseError) {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        }
+        throw new Error(errorMessage);
+      }
+      setUploadHistory((prev) => prev.filter((item) => item.clientId !== clientIdToRemove));
+    } catch (error) {
+      console.error('Error deleting upload:', error);
+      setError(error?.message || 'Failed to delete upload. Please try again.');
+    }
   };
 
-  const openUploadSession = (entry) => {
+  const clearUploadHistory = async () => {
+    const entries = [...uploadHistory];
+    for (const entry of entries) {
+      await removeUploadHistory(entry.clientId);
+    }
+  };
+
+  const openUploadSession = async (entry) => {
     if (socket) {
       socket.close();
     }
@@ -218,6 +260,10 @@ function App() {
     setPdfUrl(entry.fileUrl || null);
     setPdfFilename(entry.filename || '');
     setSelectionSummary(null);
+    const history = await fetchSessionMessages(entry.clientId);
+    if (history.length > 0) {
+      setMessages(history);
+    }
   };
 
   const filteredUploads = uploadHistory

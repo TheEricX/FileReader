@@ -15,6 +15,7 @@ env/
 # Backend
 backend/.env
 backend/uploads/
+backend/app/*.db
 
 # Node / frontend
 node_modules/
