@@ -218,14 +218,21 @@ class ExcelAgent:
         message_history: List[Dict[str, Any]],
         excel_utils,
         provider: str = "openai",
-        model_id: Optional[str] = None
+        model_id: Optional[str] = None,
+        model_params: Optional[Dict[str, Any]] = None
     ):
         provider = (provider or "openai").lower()
         if provider == "bedrock":
-            return self._call_bedrock(message_history, excel_utils, model_id)
-        return self._call_openai(message_history, excel_utils, model_id)
+            return self._call_bedrock(message_history, excel_utils, model_id, model_params)
+        return self._call_openai(message_history, excel_utils, model_id, model_params)
 
-    def _call_openai(self, message_history: List[Dict[str, Any]], excel_utils, model_id: Optional[str]):
+    def _call_openai(
+        self,
+        message_history: List[Dict[str, Any]],
+        excel_utils,
+        model_id: Optional[str],
+        model_params: Optional[Dict[str, Any]] = None
+    ):
         """
         Loop until the LLM completes all tool calls and gives a final assistant response.
         """
@@ -234,6 +241,12 @@ class ExcelAgent:
         write_functions = {"update_cell", "update_range", "insert_row_or_col", "delete_row_or_col", "find_and_replace"}
         all_messages = message_history.copy()
         excel_modified = False
+        params = model_params or {}
+        temperature = params.get("temperature", 0.2)
+        max_tokens = params.get("max_tokens", 2048)
+        top_p = params.get("top_p", 1)
+        presence_penalty = params.get("presence_penalty", 0)
+        frequency_penalty = params.get("frequency_penalty", 0)
 
         while True:
             response = self.client.chat.completions.create(
@@ -241,7 +254,11 @@ class ExcelAgent:
                 messages=all_messages,
                 tools=self.tools,
                 tool_choice="auto",
-                max_tokens=2048
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty
             )
             msg = response.choices[0].message
 
@@ -314,7 +331,13 @@ class ExcelAgent:
         system = "\n\n".join(system_messages) if system_messages else None
         return system, messages
 
-    def _call_bedrock(self, message_history: List[Dict[str, Any]], excel_utils, model_id: Optional[str]):
+    def _call_bedrock(
+        self,
+        message_history: List[Dict[str, Any]],
+        excel_utils,
+        model_id: Optional[str],
+        model_params: Optional[Dict[str, Any]] = None
+    ):
         write_functions = {"update_cell", "update_range", "insert_row_or_col", "delete_row_or_col", "find_and_replace"}
         system, messages = self._build_bedrock_messages(message_history)
         excel_modified = False
@@ -322,13 +345,18 @@ class ExcelAgent:
         model_id = model_id or os.getenv("BEDROCK_MODEL_ID", "")
         if not model_id:
             raise ValueError("Bedrock model_id is required.")
+        params = model_params or {}
+        temperature = params.get("temperature", 0.2)
+        max_tokens = params.get("max_tokens", 2048)
+        top_p = params.get("top_p", 1)
 
         while True:
             body = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "messages": messages,
-                "max_tokens": 2048,
-                "temperature": 0.2,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
                 "tools": tools
             }
             if system:

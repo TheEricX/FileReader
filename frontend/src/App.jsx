@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { FiSettings } from 'react-icons/fi';
 import FileUpload from './components/FileUpload';
 import PdfUpload from './components/PdfUpload';
 import ExcelViewer from './components/ExcelViewer';
@@ -39,6 +40,16 @@ function App() {
   const [uploadSearch, setUploadSearch] = useState('');
   const [uploadFilterType, setUploadFilterType] = useState('all');
   const [uploadSort, setUploadSort] = useState('newest');
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsModelId, setSettingsModelId] = useState(null);
+  const defaultModelParams = useMemo(() => ({
+    temperature: 0.2,
+    maxTokens: 2048,
+    topP: 1,
+    presencePenalty: 0,
+    frequencyPenalty: 0
+  }), []);
+  const [modelParamsByModel, setModelParamsByModel] = useState({});
   const [chatDraft, setChatDraft] = useState('');
   const [focusInputToken, setFocusInputToken] = useState(0);
   const [selectionSummary, setSelectionSummary] = useState(null);
@@ -145,6 +156,38 @@ function App() {
       console.warn('Failed to persist upload history', error);
     }
   }, [uploadHistory]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('excelFlowModelParamsByModel');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          setModelParamsByModel(parsed);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load model params', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('excelFlowModelParamsByModel', JSON.stringify(modelParamsByModel));
+    } catch (error) {
+      console.warn('Failed to persist model params', error);
+    }
+  }, [modelParamsByModel]);
+
+  useEffect(() => {
+    setModelParamsByModel((prev) => {
+      if (prev[selectedModelId]) return prev;
+      return {
+        ...prev,
+        [selectedModelId]: { ...defaultModelParams }
+      };
+    });
+  }, [selectedModelId, defaultModelParams]);
 
   const addUploadHistory = (entry) => {
     setUploadHistory((prev) => {
@@ -332,11 +375,20 @@ function App() {
     
     const selectedModel = modelOptions.find((model) => model.id === selectedModelId) || modelOptions[0];
 
+    const activeParams = modelParamsByModel[selectedModelId] || defaultModelParams;
+
     // Send message to the server
     socket.send(JSON.stringify({
       message,
       model_provider: selectedModel.provider,
-      model_id: selectedModel.model
+      model_id: selectedModel.model,
+      model_params: {
+        temperature: activeParams.temperature,
+        max_tokens: activeParams.maxTokens,
+        top_p: activeParams.topP,
+        presence_penalty: activeParams.presencePenalty,
+        frequency_penalty: activeParams.frequencyPenalty
+      }
     }));
   };
 
@@ -399,6 +451,21 @@ function App() {
     return date.toLocaleString();
   };
 
+  const handleParamChange = (key, value, cast = 'float') => {
+    const nextValue = cast === 'int' ? Number.parseInt(value, 10) : Number.parseFloat(value);
+    setModelParamsByModel((prev) => {
+      const targetModelId = settingsModelId || selectedModelId;
+      const current = prev[targetModelId] || defaultModelParams;
+      return {
+        ...prev,
+        [targetModelId]: {
+          ...current,
+          [key]: Number.isNaN(nextValue) ? current[key] : nextValue
+        }
+      };
+    });
+  };
+
   useEffect(() => {
     if (!isResizing) return;
 
@@ -435,7 +502,7 @@ function App() {
                 <button
                   key={mode.id}
                   type="button"
-                  className={selectedMode === mode.id && !showUploadManager ? 'active' : ''}
+                  className={selectedMode === mode.id && !showUploadManager && !showSettings ? 'active' : ''}
                   onClick={() => setSelectedMode(mode.id)}
                 >
                   <span>{mode.label}</span>
@@ -451,7 +518,10 @@ function App() {
                   <button
                     type="button"
                     className={showUploadManager ? 'active' : ''}
-                    onClick={() => setShowUploadManager(true)}
+                    onClick={() => {
+                      setShowUploadManager(true);
+                      setShowSettings(false);
+                    }}
                   >
                     Manage
                   </button>
@@ -486,9 +556,135 @@ function App() {
                 </ul>
               )}
             </div>
+            <button
+              type="button"
+              className={`settings-button ${showSettings ? 'active' : ''}`}
+              onClick={() => {
+                setShowSettings(true);
+                setShowUploadManager(false);
+                setSettingsModelId(null);
+              }}
+            >
+              <FiSettings />
+              Settings
+            </button>
           </aside>
           <div className="upload-content">
-            {showUploadManager ? (
+            {showSettings ? (
+              <div className="model-settings-panel">
+                <div className="model-settings-header">
+                  <div>
+                    <h2>Model Settings</h2>
+                    <p>Choose a model, then customize its parameters.</p>
+                  </div>
+                  <button type="button" onClick={() => setShowSettings(false)}>
+                    Close
+                  </button>
+                </div>
+                {!settingsModelId ? (
+                  <div className="model-settings-chooser">
+                    {modelOptions.map((model) => (
+                      <button
+                        key={model.id}
+                        type="button"
+                        className="model-option"
+                        onClick={() => setSettingsModelId(model.id)}
+                      >
+                        <span>{model.label}</span>
+                        <small>{model.provider}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <div className="model-settings-controls">
+                      <button
+                        type="button"
+                        className="model-settings-back"
+                        onClick={() => setSettingsModelId(null)}
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        className="model-settings-reset"
+                        onClick={() =>
+                          setModelParamsByModel((prev) => ({
+                            ...prev,
+                            [settingsModelId]: { ...defaultModelParams }
+                          }))
+                        }
+                      >
+                        Reset to default
+                      </button>
+                    </div>
+                    <div className="model-setting-row">
+                      <label htmlFor="param-temperature">Temperature</label>
+                      <input
+                        id="param-temperature"
+                        type="number"
+                        min="0"
+                        max="2"
+                        step="0.1"
+                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).temperature}
+                        onChange={(event) => handleParamChange('temperature', event.target.value, 'float')}
+                      />
+                    </div>
+                    <div className="model-setting-row">
+                      <label htmlFor="param-maxTokens">Max tokens</label>
+                      <input
+                        id="param-maxTokens"
+                        type="number"
+                        min="256"
+                        max="8192"
+                        step="128"
+                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).maxTokens}
+                        onChange={(event) => handleParamChange('maxTokens', event.target.value, 'int')}
+                      />
+                    </div>
+                    <div className="model-setting-row">
+                      <label htmlFor="param-topP">Top P</label>
+                      <input
+                        id="param-topP"
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).topP}
+                        onChange={(event) => handleParamChange('topP', event.target.value, 'float')}
+                      />
+                    </div>
+                    <div className="model-setting-row">
+                      <label htmlFor="param-presencePenalty">Presence penalty</label>
+                      <input
+                        id="param-presencePenalty"
+                        type="number"
+                        min="-2"
+                        max="2"
+                        step="0.1"
+                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).presencePenalty}
+                        onChange={(event) => handleParamChange('presencePenalty', event.target.value, 'float')}
+                      />
+                    </div>
+                    <div className="model-setting-row">
+                      <label htmlFor="param-frequencyPenalty">Frequency penalty</label>
+                      <input
+                        id="param-frequencyPenalty"
+                        type="number"
+                        min="-2"
+                        max="2"
+                        step="0.1"
+                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).frequencyPenalty}
+                        onChange={(event) => handleParamChange('frequencyPenalty', event.target.value, 'float')}
+                      />
+                    </div>
+                    <p className="model-settings-note">
+                      Penalties apply to OpenAI models. Bedrock uses temperature, top_p, and max_tokens.
+                    </p>
+                  </>
+                )}
+              </div>
+            ) : showUploadManager ? (
               <div className="upload-manager">
               <div className="upload-manager-header">
                 <div>

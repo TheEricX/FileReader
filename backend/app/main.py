@@ -270,6 +270,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             user_message = message_data.get("message", "")
             model_provider = message_data.get("model_provider", "openai")
             model_id = message_data.get("model_id")
+            model_params = message_data.get("model_params") or {}
             if model_provider not in {"openai", "bedrock"}:
                 model_provider = "openai"
             
@@ -286,7 +287,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     message_history,
                     excel_utils,
                     model_provider,
-                    model_id
+                    model_id,
+                    model_params
                 )
                 
                 # Add assistant response to history
@@ -389,6 +391,7 @@ async def pdf_websocket_endpoint(websocket: WebSocket, client_id: str):
             user_message = message_data.get("message", "")
             model_provider = message_data.get("model_provider", "openai")
             model_id = message_data.get("model_id")
+            model_params = message_data.get("model_params") or {}
             if model_provider not in {"openai", "bedrock"}:
                 model_provider = "openai"
 
@@ -402,7 +405,8 @@ async def pdf_websocket_endpoint(websocket: WebSocket, client_id: str):
                 response = pdf_agent.call_agent(
                     message_history,
                     model_provider,
-                    model_id
+                    model_id,
+                    model_params
                 )
 
                 active_pdf_connections[client_id]["message_history"].append(
