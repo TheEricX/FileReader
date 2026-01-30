@@ -378,17 +378,21 @@ function App() {
     const activeParams = modelParamsByModel[selectedModelId] || defaultModelParams;
 
     // Send message to the server
+    const modelParams = {
+      temperature: activeParams.temperature,
+      max_tokens: activeParams.maxTokens,
+      presence_penalty: activeParams.presencePenalty,
+      frequency_penalty: activeParams.frequencyPenalty
+    };
+    if (selectedModel.provider !== 'bedrock') {
+      modelParams.top_p = activeParams.topP;
+    }
+
     socket.send(JSON.stringify({
       message,
       model_provider: selectedModel.provider,
       model_id: selectedModel.model,
-      model_params: {
-        temperature: activeParams.temperature,
-        max_tokens: activeParams.maxTokens,
-        top_p: activeParams.topP,
-        presence_penalty: activeParams.presencePenalty,
-        frequency_penalty: activeParams.frequencyPenalty
-      }
+      model_params: modelParams
     }));
   };
 
@@ -679,7 +683,7 @@ function App() {
                       />
                     </div>
                     <p className="model-settings-note">
-                      Penalties apply to OpenAI models. Bedrock uses temperature, top_p, and max_tokens.
+                      Penalties apply to OpenAI models. Bedrock uses temperature or top_p plus max_tokens.
                     </p>
                   </>
                 )}

@@ -82,15 +82,17 @@ class PdfAgent:
         params = model_params or {}
         temperature = params.get("temperature", 0.2)
         max_tokens = params.get("max_tokens", 2048)
-        top_p = params.get("top_p", 1)
+        top_p = params.get("top_p")
 
         body = {
             "anthropic_version": "bedrock-2023-05-31",
             "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": top_p
+            "max_tokens": max_tokens
         }
+        if temperature is not None:
+            body["temperature"] = temperature
+        elif top_p is not None:
+            body["top_p"] = top_p
         if system:
             body["system"] = system
 
