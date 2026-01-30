@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { FiSend } from 'react-icons/fi';
+import { FiSend, FiTrash2 } from 'react-icons/fi';
 
 const ChatInterface = ({
   messages,
@@ -13,6 +13,7 @@ const ChatInterface = ({
   title = 'Excel Agent Chat',
   placeholder = 'Ask about your Excel data...',
   emptyStateText = 'Start chatting with the Excel Agent',
+  onClearMessages,
   selectionSummary,
   onReferenceSelection,
   onClearSelection
@@ -102,6 +103,16 @@ const ChatInterface = ({
             ))}
           </select>
         </div>
+        <button
+          type="button"
+          className="chat-clear chat-clear-header"
+          onClick={onClearMessages}
+          disabled={!messages.length}
+          aria-label="Clear chat"
+        >
+          <FiTrash2 />
+          Clear
+        </button>
       </div>
       
       <div

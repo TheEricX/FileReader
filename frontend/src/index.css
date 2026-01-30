@@ -289,6 +289,7 @@ body {
   border-radius: 10px;
   box-shadow: var(--shadow);
   border: 1px solid var(--border);
+  position: relative;
 }
 
 .chat-header {
@@ -299,6 +300,7 @@ body {
   gap: 0.5rem;
   padding: 0.9rem 1rem 0.8rem;
   border-bottom: 1px solid var(--border);
+  position: relative;
 }
 
 .chat-title {
@@ -315,6 +317,30 @@ body {
   color: var(--text-muted);
   font-size: 0.875rem;
   width: 100%;
+}
+
+.chat-clear {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.chat-clear:hover {
+  border-color: var(--accent);
+}
+
+.chat-clear:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .model-select select {
@@ -342,6 +368,12 @@ body {
   flex-direction: column;
   justify-content: flex-end;
   min-height: 120px;
+}
+
+.chat-clear-header {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
 }
 
 .chat-resize-handle {

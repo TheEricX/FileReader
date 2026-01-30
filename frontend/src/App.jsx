@@ -34,6 +34,11 @@ function App() {
   const [sessionMode, setSessionMode] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
   const [pdfFilename, setPdfFilename] = useState('');
+  const [uploadHistory, setUploadHistory] = useState([]);
+  const [showUploadManager, setShowUploadManager] = useState(false);
+  const [uploadSearch, setUploadSearch] = useState('');
+  const [uploadFilterType, setUploadFilterType] = useState('all');
+  const [uploadSort, setUploadSort] = useState('newest');
   const [chatDraft, setChatDraft] = useState('');
   const [focusInputToken, setFocusInputToken] = useState(0);
   const [selectionSummary, setSelectionSummary] = useState(null);
@@ -119,6 +124,78 @@ function App() {
     };
   }, [clientId, sessionMode]);
 
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('excelFlowUploads');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setUploadHistory(parsed);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load upload history', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('excelFlowUploads', JSON.stringify(uploadHistory));
+    } catch (error) {
+      console.warn('Failed to persist upload history', error);
+    }
+  }, [uploadHistory]);
+
+  const addUploadHistory = (entry) => {
+    setUploadHistory((prev) => {
+      const next = [entry, ...prev.filter((item) => item.clientId !== entry.clientId)];
+      return next.slice(0, 20);
+    });
+  };
+
+  const removeUploadHistory = (clientIdToRemove) => {
+    setUploadHistory((prev) => prev.filter((item) => item.clientId !== clientIdToRemove));
+  };
+
+  const clearUploadHistory = () => {
+    setUploadHistory([]);
+  };
+
+  const openUploadSession = (entry) => {
+    if (socket) {
+      socket.close();
+    }
+    setSocket(null);
+    setClientId(entry.clientId);
+    setSessionMode(entry.type);
+    setSelectedMode(entry.type);
+    setMessages([]);
+    setError(null);
+    setExcelData(null);
+    setPdfUrl(entry.fileUrl || null);
+    setPdfFilename(entry.filename || '');
+    setSelectionSummary(null);
+  };
+
+  const filteredUploads = uploadHistory
+    .filter((entry) => {
+      if (uploadFilterType !== 'all' && entry.type !== uploadFilterType) {
+        return false;
+      }
+      if (!uploadSearch.trim()) return true;
+      const keyword = uploadSearch.trim().toLowerCase();
+      return `${entry.filename} ${entry.type}`.toLowerCase().includes(keyword);
+    })
+    .sort((a, b) => {
+      if (uploadSort === 'name') {
+        return (a.filename || '').localeCompare(b.filename || '');
+      }
+      if (uploadSort === 'oldest') {
+        return new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime();
+      }
+      return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
+    });
+
   const fetchExcelData = async () => {
     try {
       const response = await fetch(`http://localhost:8000/excel/${clientId}`);
@@ -172,6 +249,12 @@ function App() {
       setClientId(data.client_id);
       setSessionMode('spreadsheet');
       setSelectionSummary(null);
+      addUploadHistory({
+        clientId: data.client_id,
+        filename: file.name,
+        type: 'spreadsheet',
+        uploadedAt: new Date().toISOString()
+      });
     } catch (error) {
       console.error('Error uploading file:', error);
       setError(error?.message || 'Failed to upload file. Please try again.');
@@ -220,6 +303,13 @@ function App() {
       if (data.file_url) {
         setPdfUrl(`http://localhost:8000${data.file_url}`);
       }
+      addUploadHistory({
+        clientId: data.client_id,
+        filename: data.filename || file.name,
+        type: 'pdf',
+        fileUrl: data.file_url ? `http://localhost:8000${data.file_url}` : null,
+        uploadedAt: new Date().toISOString()
+      });
     } catch (error) {
       console.error('Error uploading PDF:', error);
       setError(error?.message || 'Failed to upload PDF. Please try again.');
@@ -302,6 +392,13 @@ function App() {
     setIsResizing(true);
   };
 
+  const formatUploadTime = (isoString) => {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString();
+  };
+
   useEffect(() => {
     if (!isResizing) return;
 
@@ -338,7 +435,7 @@ function App() {
                 <button
                   key={mode.id}
                   type="button"
-                  className={selectedMode === mode.id ? 'active' : ''}
+                  className={selectedMode === mode.id && !showUploadManager ? 'active' : ''}
                   onClick={() => setSelectedMode(mode.id)}
                 >
                   <span>{mode.label}</span>
@@ -347,9 +444,134 @@ function App() {
                 </button>
               ))}
             </div>
+            <div className="upload-history">
+              <div className="upload-history-header">
+                <h4>Recent Uploads</h4>
+                <div className="upload-history-actions">
+                  <button
+                    type="button"
+                    className={showUploadManager ? 'active' : ''}
+                    onClick={() => setShowUploadManager(true)}
+                  >
+                    Manage
+                  </button>
+                  {uploadHistory.length > 0 && (
+                    <button type="button" onClick={clearUploadHistory}>
+                      Clear All
+                    </button>
+                  )}
+                </div>
+              </div>
+              {uploadHistory.length === 0 ? (
+                <p>No uploads yet.</p>
+              ) : (
+                <ul className="upload-history-list">
+                  {uploadHistory.map((entry) => (
+                    <li key={entry.clientId}>
+                      <div className="upload-history-main">
+                        <span className={`upload-type ${entry.type}`}>{entry.type}</span>
+                        <strong>{entry.filename}</strong>
+                      </div>
+                      <span className="upload-time">{formatUploadTime(entry.uploadedAt)}</span>
+                      <div className="upload-actions">
+                        <button type="button" onClick={() => openUploadSession(entry)}>
+                          Open
+                        </button>
+                        <button type="button" onClick={() => removeUploadHistory(entry.clientId)}>
+                          Remove
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </aside>
           <div className="upload-content">
-            {selectedMode === 'spreadsheet' ? (
+            {showUploadManager ? (
+              <div className="upload-manager">
+              <div className="upload-manager-header">
+                <div>
+                  <h2>All Uploads</h2>
+                  <p>Search and reopen any uploaded file.</p>
+                </div>
+                <button type="button" onClick={() => setShowUploadManager(false)}>
+                  Close
+                </button>
+              </div>
+              <div className="upload-manager-search">
+                <input
+                  type="text"
+                  placeholder="Search by filename or type"
+                  value={uploadSearch}
+                  onChange={(event) => setUploadSearch(event.target.value)}
+                />
+              </div>
+              <div className="upload-manager-controls">
+                <div className="upload-filter">
+                  <button
+                    type="button"
+                    className={uploadFilterType === 'all' ? 'active' : ''}
+                    onClick={() => setUploadFilterType('all')}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    className={uploadFilterType === 'spreadsheet' ? 'active' : ''}
+                    onClick={() => setUploadFilterType('spreadsheet')}
+                  >
+                    Spreadsheets
+                  </button>
+                  <button
+                    type="button"
+                    className={uploadFilterType === 'pdf' ? 'active' : ''}
+                    onClick={() => setUploadFilterType('pdf')}
+                  >
+                    PDFs
+                  </button>
+                </div>
+                <div className="upload-sort">
+                  <label htmlFor="upload-sort">Sort</label>
+                  <select
+                    id="upload-sort"
+                    value={uploadSort}
+                    onChange={(event) => setUploadSort(event.target.value)}
+                  >
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="name">A–Z</option>
+                  </select>
+                </div>
+              </div>
+              <div className="upload-manager-meta">
+                Showing {filteredUploads.length} of {uploadHistory.length}
+              </div>
+              {filteredUploads.length === 0 ? (
+                <div className="upload-manager-empty">No uploads match your search.</div>
+              ) : (
+                  <div className="upload-manager-list">
+                    {filteredUploads.map((entry) => (
+                      <div className="upload-manager-item" key={entry.clientId}>
+                        <div className="upload-history-main">
+                          <span className={`upload-type ${entry.type}`}>{entry.type}</span>
+                          <strong>{entry.filename}</strong>
+                        </div>
+                        <span className="upload-time">{formatUploadTime(entry.uploadedAt)}</span>
+                        <div className="upload-actions">
+                          <button type="button" onClick={() => openUploadSession(entry)}>
+                            Open
+                          </button>
+                          <button type="button" onClick={() => removeUploadHistory(entry.clientId)}>
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : selectedMode === 'spreadsheet' ? (
               <FileUpload onFileUpload={handleSpreadsheetUpload} loading={loading} error={error} />
             ) : selectedMode === 'pdf' ? (
               <PdfUpload onFileUpload={handlePdfUpload} loading={loading} error={error} />
@@ -401,6 +623,7 @@ function App() {
               inputValue={chatDraft}
               onInputChange={setChatDraft}
               focusToken={focusInputToken}
+              onClearMessages={() => setMessages([])}
               title={sessionMode === 'pdf' ? 'PDF Analyst Chat' : 'Excel Agent Chat'}
               placeholder={sessionMode === 'pdf' ? 'Ask about your PDF...' : 'Ask about your Excel data...'}
               emptyStateText={sessionMode === 'pdf'
