@@ -161,3 +161,9 @@ def delete_upload(client_id: str) -> None:
         conn.execute("DELETE FROM uploads WHERE client_id = ?", (client_id,))
         conn.execute("DELETE FROM sessions WHERE client_id = ?", (client_id,))
         conn.commit()
+
+
+def delete_session(client_id: str) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM sessions WHERE client_id = ?", (client_id,))
+        conn.commit()

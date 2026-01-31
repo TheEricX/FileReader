@@ -3,7 +3,7 @@ import json
 import uuid
 from datetime import datetime
 import pandas as pd
-from typing import Dict
+from typing import Dict, Set
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -22,7 +22,8 @@ from .persistence import (
     get_upload,
     get_session,
     list_uploads,
-    delete_upload
+    delete_upload,
+    delete_session
 )
 
 load_dotenv()
@@ -45,6 +46,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Store active connections and their associated Excel files
 active_connections: Dict[str, Dict] = {}
 active_pdf_connections: Dict[str, Dict] = {}
+canceled_requests: Dict[str, Set[str]] = {}
 
 # Initialize the Excel agent
 excel_agent = ExcelAgent()
@@ -71,6 +73,18 @@ class ConnectionManager:
             await connection.send_text(message)
 
 manager = ConnectionManager()
+
+
+def _mark_canceled(client_id: str, request_id: str) -> None:
+    if not request_id:
+        return
+    if client_id not in canceled_requests:
+        canceled_requests[client_id] = set()
+    canceled_requests[client_id].add(request_id)
+
+
+def _is_canceled(client_id: str, request_id: str) -> bool:
+    return bool(request_id) and request_id in canceled_requests.get(client_id, set())
 
 
 def _build_excel_system_message(file_path: str) -> str:
@@ -198,6 +212,37 @@ def _get_or_restore_session_messages(client_id: str) -> list:
         return []
     return session.get("message_history", [])
 
+
+def _reset_session_history(client_id: str, session_type: str) -> None:
+    if session_type == "spreadsheet":
+        if client_id in active_connections:
+            file_path = active_connections[client_id]["file_path"]
+            system_message = _build_excel_system_message(file_path)
+            active_connections[client_id]["message_history"] = [
+                {"role": "system", "content": system_message}
+            ]
+            save_session(client_id, "spreadsheet", active_connections[client_id]["message_history"])
+            return
+        upload = get_upload(client_id)
+        if upload and os.path.exists(upload["file_path"]):
+            system_message = _build_excel_system_message(upload["file_path"])
+            save_session(client_id, "spreadsheet", [{"role": "system", "content": system_message}])
+    elif session_type == "pdf":
+        if client_id in active_pdf_connections:
+            file_path = active_pdf_connections[client_id]["file_path"]
+            filename = active_pdf_connections[client_id].get("filename") or os.path.basename(file_path)
+            system_message = _build_pdf_system_message(file_path, filename)
+            active_pdf_connections[client_id]["message_history"] = [
+                {"role": "system", "content": system_message}
+            ]
+            save_session(client_id, "pdf", active_pdf_connections[client_id]["message_history"])
+            return
+        upload = get_upload(client_id)
+        if upload and os.path.exists(upload["file_path"]):
+            filename = upload.get("filename") or os.path.basename(upload["file_path"])
+            system_message = _build_pdf_system_message(upload["file_path"], filename)
+            save_session(client_id, "pdf", [{"role": "system", "content": system_message}])
+
 @app.get("/")
 async def root():
     return {"message": "Excel Agent API is running"}
@@ -224,6 +269,16 @@ async def get_session_messages(client_id: str):
     if not messages:
         return JSONResponse(status_code=404, content={"error": "Session not found"})
     return {"messages": messages}
+
+
+@app.delete("/sessions/{client_id}")
+async def delete_session_messages(client_id: str):
+    session = get_session(client_id)
+    if not session:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+    delete_session(client_id)
+    _reset_session_history(client_id, session["type"])
+    return {"status": "cleared", "client_id": client_id}
 
 @app.post("/upload")
 async def upload_excel(file: UploadFile = File(...)):
@@ -403,7 +458,18 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             # Receive message from client
             data = await websocket.receive_text()
             message_data = json.loads(data)
+            if message_data.get("type") == "cancel":
+                _mark_canceled(client_id, message_data.get("request_id"))
+                await manager.send_message(
+                    client_id,
+                    json.dumps({
+                        "type": "canceled",
+                        "request_id": message_data.get("request_id")
+                    })
+                )
+                continue
             user_message = message_data.get("message", "")
+            request_id = message_data.get("request_id")
             model_provider = message_data.get("model_provider", "openai")
             model_id = message_data.get("model_id")
             model_params = message_data.get("model_params") or {}
@@ -411,6 +477,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 model_provider = "openai"
             if model_provider == "bedrock" and model_params.get("bedrock_use_attachment"):
                 model_params["file_path"] = active_connections[client_id]["file_path"]
+            if _is_canceled(client_id, request_id):
+                continue
             
             # Add user message to history
             active_connections[client_id]["message_history"].append({"role": "user", "content": user_message})
@@ -429,6 +497,10 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     model_id,
                     model_params
                 )
+
+                if _is_canceled(client_id, request_id):
+                    canceled_requests.get(client_id, set()).discard(request_id)
+                    continue
                 
                 # Add assistant response to history
                 active_connections[client_id]["message_history"].append({"role": "assistant", "content": response})
@@ -440,7 +512,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         client_id, 
                         json.dumps({
                             "response": response,
-                            "excel_modified": excel_modified
+                            "excel_modified": excel_modified,
+                            "request_id": request_id
                         })
                     )
                 except TypeError as e:
@@ -450,7 +523,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         client_id, 
                         json.dumps({
                             "response": str(response),
-                            "excel_modified": excel_modified
+                            "excel_modified": excel_modified,
+                            "request_id": request_id
                         })
                     )
                 
@@ -488,20 +562,23 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                                 "metadata": {
                                     "rows": rows,
                                     "columns": cols
-                                }
+                                },
+                                "request_id": request_id
                             })
                         )
                     except TypeError as e:
                         print(f"JSON serialization error in excel_update: {str(e)}")
             except Exception as e:
                 print(f"Error in agent processing: {str(e)}")
-                await manager.send_message(
-                    client_id,
-                    json.dumps({
-                        "response": f"Error processing request: {str(e)}",
-                        "excel_modified": False
-                    })
-                )
+                if not _is_canceled(client_id, request_id):
+                    await manager.send_message(
+                        client_id,
+                        json.dumps({
+                            "response": f"Error processing request: {str(e)}",
+                            "excel_modified": False,
+                            "request_id": request_id
+                        })
+                    )
     
     except WebSocketDisconnect:
         manager.disconnect(client_id)
@@ -556,12 +633,25 @@ async def pdf_websocket_endpoint(websocket: WebSocket, client_id: str):
         while True:
             data = await websocket.receive_text()
             message_data = json.loads(data)
+            if message_data.get("type") == "cancel":
+                _mark_canceled(client_id, message_data.get("request_id"))
+                await manager.send_message(
+                    client_id,
+                    json.dumps({
+                        "type": "canceled",
+                        "request_id": message_data.get("request_id")
+                    })
+                )
+                continue
             user_message = message_data.get("message", "")
+            request_id = message_data.get("request_id")
             model_provider = message_data.get("model_provider", "openai")
             model_id = message_data.get("model_id")
             model_params = message_data.get("model_params") or {}
             if model_provider not in {"openai", "bedrock"}:
                 model_provider = "openai"
+            if _is_canceled(client_id, request_id):
+                continue
 
             active_pdf_connections[client_id]["message_history"].append(
                 {"role": "user", "content": user_message}
@@ -578,6 +668,10 @@ async def pdf_websocket_endpoint(websocket: WebSocket, client_id: str):
                     model_params
                 )
 
+                if _is_canceled(client_id, request_id):
+                    canceled_requests.get(client_id, set()).discard(request_id)
+                    continue
+
                 active_pdf_connections[client_id]["message_history"].append(
                     {"role": "assistant", "content": response}
                 )
@@ -585,14 +679,21 @@ async def pdf_websocket_endpoint(websocket: WebSocket, client_id: str):
 
                 await manager.send_message(
                     client_id,
-                    json.dumps({"response": response})
+                    json.dumps({
+                        "response": response,
+                        "request_id": request_id
+                    })
                 )
             except Exception as e:
                 print(f"Error in PDF agent processing: {str(e)}")
-                await manager.send_message(
-                    client_id,
-                    json.dumps({"response": f"Error processing request: {str(e)}"})
-                )
+                if not _is_canceled(client_id, request_id):
+                    await manager.send_message(
+                        client_id,
+                        json.dumps({
+                            "response": f"Error processing request: {str(e)}",
+                            "request_id": request_id
+                        })
+                    )
 
     except WebSocketDisconnect:
         manager.disconnect(client_id)

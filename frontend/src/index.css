@@ -536,6 +536,21 @@ body {
   background-color: var(--accent-strong);
 }
 
+.message-stop {
+  padding: 0.55rem 0.9rem;
+  border-radius: 8px;
+  background-color: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 0.8rem;
+  align-self: flex-start;
+}
+
+.message-stop:hover {
+  border-color: var(--accent);
+}
+
 .message-input textarea:disabled {
   opacity: 0.7;
   cursor: not-allowed;

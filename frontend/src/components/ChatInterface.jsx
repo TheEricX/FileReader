@@ -10,6 +10,7 @@ const ChatInterface = ({
   inputValue,
   onInputChange,
   isWaiting = false,
+  onStop,
   modeBadge,
   focusToken,
   title = 'Excel Agent Chat',
@@ -186,9 +187,15 @@ const ChatInterface = ({
             rows={2}
             disabled={isWaiting}
           />
-          <button type="submit" aria-label="Send message" disabled={isWaiting}>
-            <FiSend />
-          </button>
+          {isWaiting ? (
+            <button type="button" className="message-stop" onClick={onStop} aria-label="Stop response">
+              Stop
+            </button>
+          ) : (
+            <button type="submit" aria-label="Send message">
+              <FiSend />
+            </button>
+          )}
         </form>
       </div>
     </div>

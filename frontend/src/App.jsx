@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { FiSettings } from 'react-icons/fi';
 import FileUpload from './components/FileUpload';
 import PdfUpload from './components/PdfUpload';
@@ -53,6 +53,11 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsModelId, setSettingsModelId] = useState(null);
   const [isWaiting, setIsWaiting] = useState(false);
+  const [ignoreNextResponse, setIgnoreNextResponse] = useState(false);
+  const [requestCounter, setRequestCounter] = useState(0);
+  const canceledRequestIdsRef = useRef(new Set());
+  const pendingRequestIdRef = useRef(null);
+  const latestRequestIdRef = useRef(null);
   const [useBedrockAttachment, setUseBedrockAttachment] = useState(false);
   const defaultModelParams = useMemo(() => ({
     temperature: 0.2,
@@ -102,6 +107,24 @@ function App() {
     
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
+
+      if (data.type === 'canceled') {
+        setIsWaiting(false);
+        return;
+      }
+
+      if (data.request_id
+        && latestRequestIdRef.current
+        && data.request_id !== latestRequestIdRef.current
+        && !canceledRequestIdsRef.current.has(data.request_id)) {
+        return;
+      }
+
+      if (data.request_id && canceledRequestIdsRef.current.has(data.request_id)) {
+        canceledRequestIdsRef.current.delete(data.request_id);
+        setIsWaiting(false);
+        return;
+      }
       
       if (data.type === 'excel_update' && sessionMode === 'spreadsheet') {
         // Update Excel data when changes are made
@@ -109,18 +132,24 @@ function App() {
           data: data.data,
           metadata: data.metadata
         });
-      } else {
+      } else if (!ignoreNextResponse) {
         // Handle chat messages
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: data.response
         }]);
         setIsWaiting(false);
+        if (data.request_id && pendingRequestIdRef.current === data.request_id) {
+          pendingRequestIdRef.current = null;
+        }
         
         // If Excel was modified, fetch the latest data
         if (data.excel_modified && sessionMode === 'spreadsheet') {
           fetchExcelData();
         }
+      }
+      if (ignoreNextResponse) {
+        setIgnoreNextResponse(false);
       }
     };
     
@@ -469,8 +498,14 @@ function App() {
       modelParams.top_p = activeParams.topP;
     }
 
+    const nextRequestId = `req_${Date.now()}_${requestCounter}`;
+    setRequestCounter((prev) => prev + 1);
+    pendingRequestIdRef.current = nextRequestId;
+    latestRequestIdRef.current = nextRequestId;
+
     socket.send(JSON.stringify({
       message,
+      request_id: nextRequestId,
       model_provider: selectedModel.provider,
       model_id: selectedModel.model,
       model_params: modelParams
@@ -920,11 +955,42 @@ function App() {
               inputValue={chatDraft}
               onInputChange={setChatDraft}
               isWaiting={isWaiting}
+              onStop={() => {
+                const pendingId = pendingRequestIdRef.current;
+                if (pendingId && socket && socket.readyState === WebSocket.OPEN) {
+                  socket.send(JSON.stringify({
+                    type: 'cancel',
+                    request_id: pendingId
+                  }));
+                }
+                if (pendingId) {
+                  canceledRequestIdsRef.current.add(pendingId);
+                } else {
+                  setIgnoreNextResponse(true);
+                }
+                setIsWaiting(false);
+              }}
               modeBadge={useBedrockAttachment
                 ? 'Bedrock Attachment Test'
                 : 'Standard'}
               focusToken={focusInputToken}
-              onClearMessages={() => setMessages([])}
+              onClearMessages={async () => {
+                if (!clientId) {
+                  setMessages([]);
+                  return;
+                }
+                try {
+                  const response = await fetch(`http://localhost:8000/sessions/${clientId}`, {
+                    method: 'DELETE'
+                  });
+                  if (!response.ok && response.status !== 404) {
+                    throw new Error('Failed to clear session');
+                  }
+                } catch (error) {
+                  console.error('Error clearing session:', error);
+                }
+                setMessages([]);
+              }}
               title={sessionMode === 'pdf' ? 'PDF Analyst Chat' : 'Excel Agent Chat'}
               placeholder={sessionMode === 'pdf' ? 'Ask about your PDF...' : 'Ask about your Excel data...'}
               emptyStateText={sessionMode === 'pdf'
