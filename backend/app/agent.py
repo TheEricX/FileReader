@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 from typing import List, Dict, Any, Optional
 import boto3
 from openai import OpenAI
@@ -331,6 +332,37 @@ class ExcelAgent:
         system = "\n\n".join(system_messages) if system_messages else None
         return system, messages
 
+    def _build_bedrock_attachment_message(self, file_path: str) -> Dict[str, Any]:
+        _, ext = os.path.splitext(file_path)
+        ext = ext.lower()
+        media_type_map = {
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls": "application/vnd.ms-excel",
+            ".csv": "text/csv",
+            ".tsv": "text/tab-separated-values",
+            ".ods": "application/vnd.oasis.opendocument.spreadsheet"
+        }
+        media_type = media_type_map.get(ext, "application/octet-stream")
+        with open(file_path, "rb") as f:
+            data = base64.b64encode(f.read()).decode("ascii")
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": data
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": "Attached spreadsheet file for analysis."
+                }
+            ]
+        }
+
     def _call_bedrock(
         self,
         message_history: List[Dict[str, Any]],
@@ -349,6 +381,12 @@ class ExcelAgent:
         temperature = params.get("temperature", 0.2)
         max_tokens = params.get("max_tokens", 2048)
         top_p = params.get("top_p")
+        use_attachment = params.get("bedrock_use_attachment")
+        file_path = params.get("file_path")
+        if use_attachment and file_path and os.path.exists(file_path):
+            attachment_message = self._build_bedrock_attachment_message(file_path)
+            if not messages or messages[0].get("content", [{}])[0].get("type") != "document":
+                messages = [attachment_message] + messages
 
         while True:
             body = {

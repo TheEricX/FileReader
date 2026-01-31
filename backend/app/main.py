@@ -409,6 +409,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             model_params = message_data.get("model_params") or {}
             if model_provider not in {"openai", "bedrock"}:
                 model_provider = "openai"
+            if model_provider == "bedrock" and model_params.get("bedrock_use_attachment"):
+                model_params["file_path"] = active_connections[client_id]["file_path"]
             
             # Add user message to history
             active_connections[client_id]["message_history"].append({"role": "user", "content": user_message})

@@ -9,6 +9,8 @@ const ChatInterface = ({
   onModelChange,
   inputValue,
   onInputChange,
+  isWaiting = false,
+  modeBadge,
   focusToken,
   title = 'Excel Agent Chat',
   placeholder = 'Ask about your Excel data...',
@@ -88,7 +90,10 @@ const ChatInterface = ({
   return (
     <div className="chat-container" ref={chatContainerRef}>
       <div className="chat-header" ref={headerRef}>
-        <h2 className="chat-title">{title}</h2>
+        <div className="chat-title-row">
+          <h2 className="chat-title">{title}</h2>
+          {modeBadge && <span className="chat-mode-badge">{modeBadge}</span>}
+        </div>
         <div className="model-select">
           <label htmlFor="model-select">Model</label>
           <select
@@ -133,6 +138,14 @@ const ChatInterface = ({
             </div>
           ))
         )}
+        {isWaiting && (
+          <div className="message assistant-message typing-message">
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-label">Assistant is thinking</span>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
       <div
@@ -171,8 +184,9 @@ const ChatInterface = ({
             placeholder={placeholder}
             aria-label="Message input"
             rows={2}
+            disabled={isWaiting}
           />
-          <button type="submit" aria-label="Send message">
+          <button type="submit" aria-label="Send message" disabled={isWaiting}>
             <FiSend />
           </button>
         </form>

@@ -28,7 +28,17 @@ function App() {
   const [error, setError] = useState(null);
   const [socket, setSocket] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [selectedModelId, setSelectedModelId] = useState(modelOptions[0].id);
+  const [selectedModelId, setSelectedModelId] = useState(() => {
+    try {
+      const stored = localStorage.getItem('excelFlowSelectedModelId');
+      if (stored && modelOptions.some((model) => model.id === stored)) {
+        return stored;
+      }
+    } catch (error) {
+      console.warn('Failed to load selected model', error);
+    }
+    return modelOptions[1].id;
+  });
   const [leftPanelWidth, setLeftPanelWidth] = useState(68);
   const [isResizing, setIsResizing] = useState(false);
   const [selectedMode, setSelectedMode] = useState('spreadsheet');
@@ -42,6 +52,8 @@ function App() {
   const [uploadSort, setUploadSort] = useState('newest');
   const [showSettings, setShowSettings] = useState(false);
   const [settingsModelId, setSettingsModelId] = useState(null);
+  const [isWaiting, setIsWaiting] = useState(false);
+  const [useBedrockAttachment, setUseBedrockAttachment] = useState(false);
   const defaultModelParams = useMemo(() => ({
     temperature: 0.2,
     maxTokens: 2048,
@@ -103,6 +115,7 @@ function App() {
           role: 'assistant',
           content: data.response
         }]);
+        setIsWaiting(false);
         
         // If Excel was modified, fetch the latest data
         if (data.excel_modified && sessionMode === 'spreadsheet') {
@@ -113,11 +126,13 @@ function App() {
     
     ws.onclose = () => {
       console.log('WebSocket disconnected');
+      setIsWaiting(false);
     };
     
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
       setError('Connection error. Please try again.');
+      setIsWaiting(false);
     };
     
     setSocket(ws);
@@ -171,6 +186,25 @@ function App() {
       console.warn('Failed to load model params', error);
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('bedrockAttachment') === '1') {
+        setUseBedrockAttachment(true);
+      }
+    } catch (error) {
+      console.warn('Failed to read bedrockAttachment flag', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('excelFlowSelectedModelId', selectedModelId);
+    } catch (error) {
+      console.warn('Failed to persist selected model', error);
+    }
+  }, [selectedModelId]);
 
   useEffect(() => {
     try {
@@ -417,6 +451,10 @@ function App() {
 
     const activeParams = modelParamsByModel[selectedModelId] || defaultModelParams;
 
+    const useAttachment = sessionMode === 'spreadsheet'
+      && selectedModel.provider === 'bedrock'
+      && useBedrockAttachment;
+
     // Send message to the server
     const modelParams = {
       temperature: activeParams.temperature,
@@ -424,6 +462,9 @@ function App() {
       presence_penalty: activeParams.presencePenalty,
       frequency_penalty: activeParams.frequencyPenalty
     };
+    if (useAttachment) {
+      modelParams.bedrock_use_attachment = true;
+    }
     if (selectedModel.provider !== 'bedrock') {
       modelParams.top_p = activeParams.topP;
     }
@@ -434,6 +475,7 @@ function App() {
       model_id: selectedModel.model,
       model_params: modelParams
     }));
+    setIsWaiting(true);
   };
 
   const handleInsertReference = (text) => {
@@ -554,6 +596,48 @@ function App() {
                   {mode.comingSoon && <em>Coming soon</em>}
                 </button>
               ))}
+            </div>
+            <div className="test-toggle">
+              <div className="test-toggle-row">
+                <span>Bedrock attachment test</span>
+                {useBedrockAttachment && <span className="test-toggle-status">Active</span>}
+              </div>
+              <small>Send Excel as base64 attachment (Bedrock only).</small>
+              <div className="test-toggle-actions">
+                <button
+                  type="button"
+                  className="test-toggle-button"
+                  disabled={selectedMode !== 'spreadsheet'}
+                  onClick={() => {
+                    try {
+                      const url = new URL(window.location.href);
+                      url.searchParams.set('bedrockAttachment', '1');
+                      window.open(url.toString(), '_blank', 'noopener');
+                    } catch (error) {
+                      console.warn('Failed to open test window', error);
+                    }
+                  }}
+                >
+                  Open test window
+                </button>
+                {useBedrockAttachment && (
+                  <button
+                    type="button"
+                    className="test-toggle-button"
+                    onClick={() => {
+                      try {
+                        const url = new URL(window.location.href);
+                        url.searchParams.delete('bedrockAttachment');
+                        window.location.href = url.toString();
+                      } catch (error) {
+                        console.warn('Failed to disable test mode', error);
+                      }
+                    }}
+                  >
+                    Disable
+                  </button>
+                )}
+              </div>
             </div>
             <div className="upload-history">
               <div className="upload-history-header">
@@ -835,6 +919,10 @@ function App() {
               onModelChange={setSelectedModelId}
               inputValue={chatDraft}
               onInputChange={setChatDraft}
+              isWaiting={isWaiting}
+              modeBadge={useBedrockAttachment
+                ? 'Bedrock Attachment Test'
+                : 'Standard'}
               focusToken={focusInputToken}
               onClearMessages={() => setMessages([])}
               title={sessionMode === 'pdf' ? 'PDF Analyst Chat' : 'Excel Agent Chat'}
