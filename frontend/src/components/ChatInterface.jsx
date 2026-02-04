@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { FiSend, FiTrash2 } from 'react-icons/fi';
+import { FiImage, FiSend, FiTrash2, FiX } from 'react-icons/fi';
 
 const ChatInterface = ({
   messages,
@@ -19,7 +19,11 @@ const ChatInterface = ({
   onClearMessages,
   selectionSummary,
   onReferenceSelection,
-  onClearSelection
+  onClearSelection,
+  allowImageUpload = false,
+  attachments = [],
+  onAddAttachments,
+  onRemoveAttachment
 }) => {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -76,10 +80,9 @@ const ChatInterface = ({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (inputValue.trim()) {
-      onSendMessage(inputValue);
-      onInputChange('');
-    }
+    if (!inputValue.trim() && (!attachments || attachments.length === 0)) return;
+    onSendMessage(inputValue);
+    onInputChange('');
   };
 
   const handleKeyDown = (e) => {
@@ -136,6 +139,18 @@ const ChatInterface = ({
               className={`message ${msg.role === 'user' ? 'user-message' : 'assistant-message'}`}
             >
               {msg.content}
+              {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
+                <div className="message-attachments">
+                  {msg.attachments.map((attachment) => (
+                    <img
+                      key={attachment.id}
+                      src={attachment.previewUrl}
+                      alt={attachment.name || 'attachment'}
+                      className="message-attachment-image"
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           ))
         )}
@@ -145,6 +160,25 @@ const ChatInterface = ({
             <span className="typing-dot" />
             <span className="typing-dot" />
             <span className="typing-label">Assistant is thinking</span>
+          </div>
+        )}
+        {allowImageUpload && attachments.length > 0 && (
+          <div className="chat-attachment-floating">
+            <div className="chat-attachment-list">
+              {attachments.map((attachment) => (
+                <div className="chat-attachment-item" key={attachment.id}>
+                  <img src={attachment.previewUrl} alt={attachment.name} />
+                  <button
+                    type="button"
+                    className="chat-attachment-remove"
+                    onClick={() => onRemoveAttachment && onRemoveAttachment(attachment.id)}
+                    aria-label={`Remove ${attachment.name}`}
+                  >
+                    <FiX />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -177,6 +211,23 @@ const ChatInterface = ({
           </div>
         )}
         <form onSubmit={handleSubmit} className="message-input">
+          {allowImageUpload && (
+            <label className="chat-attachment-button">
+              <FiImage />
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(event) => {
+                  if (onAddAttachments) {
+                    onAddAttachments(event.target.files);
+                  }
+                  event.target.value = '';
+                }}
+                disabled={isWaiting}
+              />
+            </label>
+          )}
           <textarea
             ref={inputRef}
             value={inputValue}

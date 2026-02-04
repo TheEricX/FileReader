@@ -2,12 +2,16 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { FiSettings } from 'react-icons/fi';
 import FileUpload from './components/FileUpload';
 import PdfUpload from './components/PdfUpload';
+import DocUpload from './components/DocUpload';
 import ExcelViewer from './components/ExcelViewer';
 import PdfViewer from './components/PdfViewer';
+import DocViewer from './components/DocViewer';
 import ChatInterface from './components/ChatInterface';
 import './App.css';
 
 function App() {
+  const GEMINI_MAX_IMAGE_COUNT = 4;
+  const GEMINI_MAX_IMAGE_SIZE_MB = 5;
   const modelOptions = [
     {
       id: 'openai:gpt-4o',
@@ -20,6 +24,26 @@ function App() {
       label: 'AWS Bedrock Claude Sonnet 4.5',
       provider: 'bedrock',
       model: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    },
+  ];
+  const geminiModelOptions = [
+    {
+      id: 'gemini:gemini-2.5-flash',
+      label: 'Gemini 2.5 Flash',
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',
+    },
+    {
+      id: 'gemini:gemini-2.5-pro',
+      label: 'Gemini 2.5 Pro',
+      provider: 'gemini',
+      model: 'gemini-2.5-pro',
+    },
+    {
+      id: 'gemini:gemini-2.0-flash',
+      label: 'Gemini 2.0 Flash',
+      provider: 'gemini',
+      model: 'gemini-2.0-flash',
     },
   ];
   const [clientId, setClientId] = useState(null);
@@ -39,12 +63,31 @@ function App() {
     }
     return modelOptions[1].id;
   });
+  const [activeWorkspace, setActiveWorkspace] = useState('default');
+  const [geminiClientId, setGeminiClientId] = useState(null);
+  const [geminiSessionMode, setGeminiSessionMode] = useState(null);
+  const [geminiSocket, setGeminiSocket] = useState(null);
+  const [geminiMessages, setGeminiMessages] = useState([]);
+  const [geminiSelectedModelId, setGeminiSelectedModelId] = useState(geminiModelOptions[0].id);
+  const [geminiPdfUrl, setGeminiPdfUrl] = useState(null);
+  const [geminiFilename, setGeminiFilename] = useState('');
+  const [geminiDocText, setGeminiDocText] = useState('');
+  const [geminiExcelData, setGeminiExcelData] = useState(null);
+  const [geminiChatDraft, setGeminiChatDraft] = useState('');
+  const [geminiIsWaiting, setGeminiIsWaiting] = useState(false);
+  const [geminiSelectedMode, setGeminiSelectedMode] = useState('spreadsheet');
+  const [geminiRequestCounter, setGeminiRequestCounter] = useState(0);
+  const [geminiImageAttachments, setGeminiImageAttachments] = useState([]);
+  const geminiCanceledRequestIdsRef = useRef(new Set());
+  const geminiPendingRequestIdRef = useRef(null);
+  const geminiLatestRequestIdRef = useRef(null);
   const [leftPanelWidth, setLeftPanelWidth] = useState(68);
   const [isResizing, setIsResizing] = useState(false);
   const [selectedMode, setSelectedMode] = useState('spreadsheet');
   const [sessionMode, setSessionMode] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
   const [pdfFilename, setPdfFilename] = useState('');
+  const [docText, setDocText] = useState('');
   const [uploadHistory, setUploadHistory] = useState([]);
   const [showUploadManager, setShowUploadManager] = useState(false);
   const [uploadSearch, setUploadSearch] = useState('');
@@ -86,8 +129,7 @@ function App() {
     {
       id: 'doc',
       label: 'DOC',
-      hint: 'Word documents',
-      comingSoon: true,
+      hint: 'Word documents (.docx)',
     },
   ];
 
@@ -98,7 +140,9 @@ function App() {
     // For WebSocket connections, we still need to use the full URL
     const wsUrl = sessionMode === 'pdf'
       ? `ws://localhost:8000/ws/pdf/${clientId}`
-      : `ws://localhost:8000/ws/${clientId}`;
+      : sessionMode === 'doc'
+        ? `ws://localhost:8000/ws/doc/${clientId}`
+        : `ws://localhost:8000/ws/${clientId}`;
     const ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
@@ -178,6 +222,71 @@ function App() {
       }
     };
   }, [clientId, sessionMode]);
+
+  useEffect(() => {
+    if (!geminiClientId || !geminiSessionMode) return;
+
+    const wsUrl = `ws://localhost:8000/ws/gemini/${geminiClientId}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('Gemini WebSocket connected');
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'canceled') {
+        setGeminiIsWaiting(false);
+        return;
+      }
+
+      if (data.request_id
+        && geminiLatestRequestIdRef.current
+        && data.request_id !== geminiLatestRequestIdRef.current
+        && !geminiCanceledRequestIdsRef.current.has(data.request_id)) {
+        return;
+      }
+
+      if (data.request_id && geminiCanceledRequestIdsRef.current.has(data.request_id)) {
+        geminiCanceledRequestIdsRef.current.delete(data.request_id);
+        setGeminiIsWaiting(false);
+        return;
+      }
+
+      setGeminiMessages(prev => [...prev, {
+        role: 'assistant',
+        content: data.response
+      }]);
+      setGeminiIsWaiting(false);
+      if (data.request_id && geminiPendingRequestIdRef.current === data.request_id) {
+        geminiPendingRequestIdRef.current = null;
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('Gemini WebSocket disconnected');
+      setGeminiIsWaiting(false);
+    };
+
+    ws.onerror = (error) => {
+      console.error('Gemini WebSocket error:', error);
+      setError('Gemini connection error. Please try again.');
+      setGeminiIsWaiting(false);
+    };
+
+    setGeminiSocket(ws);
+
+    if (geminiSessionMode === 'spreadsheet') {
+      fetchGeminiExcelData(geminiClientId);
+    }
+
+    return () => {
+      if (ws) {
+        ws.close();
+      }
+    };
+  }, [geminiClientId, geminiSessionMode]);
 
   useEffect(() => {
     const loadUploads = async () => {
@@ -275,6 +384,21 @@ function App() {
     }
   };
 
+  const fetchGeminiSessionMessages = async (clientIdToLoad) => {
+    try {
+      const response = await fetch(`http://localhost:8000/sessions/gemini/${clientIdToLoad}`);
+      if (!response.ok) {
+        return [];
+      }
+      const data = await response.json();
+      if (!Array.isArray(data.messages)) return [];
+      return data.messages.filter((msg) => msg.role !== 'system');
+    } catch (error) {
+      console.warn('Failed to load Gemini session messages', error);
+      return [];
+    }
+  };
+
   const removeUploadHistory = async (clientIdToRemove) => {
     try {
       const response = await fetch(`http://localhost:8000/uploads/${clientIdToRemove}`, {
@@ -316,10 +440,53 @@ function App() {
     setExcelData(null);
     setPdfUrl(entry.fileUrl || null);
     setPdfFilename(entry.filename || '');
+    setDocText('');
     setSelectionSummary(null);
     const history = await fetchSessionMessages(entry.clientId);
     if (history.length > 0) {
       setMessages(history);
+    }
+    if (entry.type === 'doc') {
+      try {
+        const response = await fetch(`http://localhost:8000/doc/${entry.clientId}/text`);
+        if (response.ok) {
+          const data = await response.json();
+          setDocText(data.text || '');
+        }
+      } catch (error) {
+        console.warn('Failed to load DOCX text', error);
+      }
+    }
+  };
+
+  const openGeminiUploadSession = async (entry) => {
+    if (geminiSocket) {
+      geminiSocket.close();
+    }
+    setGeminiSocket(null);
+    setGeminiClientId(entry.clientId);
+    setGeminiSessionMode(entry.type);
+    setGeminiSelectedMode(entry.type);
+    setGeminiMessages([]);
+    setGeminiExcelData(null);
+    setGeminiPdfUrl(entry.fileUrl || null);
+    setGeminiFilename(entry.filename || '');
+    setGeminiDocText('');
+    setGeminiImageAttachments([]);
+    const history = await fetchGeminiSessionMessages(entry.clientId);
+    if (history.length > 0) {
+      setGeminiMessages(history);
+    }
+    if (entry.type === 'doc') {
+      try {
+        const response = await fetch(`http://localhost:8000/doc/${entry.clientId}/text`);
+        if (response.ok) {
+          const data = await response.json();
+          setGeminiDocText(data.text || '');
+        }
+      } catch (error) {
+        console.warn('Failed to load DOCX text', error);
+      }
     }
   };
 
@@ -354,6 +521,73 @@ function App() {
       console.error('Error fetching Excel data:', error);
       setError('Failed to load Excel data. Please try again.');
     }
+  };
+
+  const fetchGeminiExcelData = async (clientIdToLoad) => {
+    try {
+      const response = await fetch(`http://localhost:8000/excel/${clientIdToLoad}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch Excel data');
+      }
+      const data = await response.json();
+      setGeminiExcelData(data);
+    } catch (error) {
+      console.error('Error fetching Gemini Excel data:', error);
+      setError('Failed to load Excel data. Please try again.');
+    }
+  };
+
+  const readImageAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Failed to read image.'));
+    reader.readAsDataURL(file);
+  });
+
+  const handleGeminiAddAttachments = async (files) => {
+    if (!files || files.length === 0) return;
+    const incoming = Array.from(files).filter((file) => file.type.startsWith('image/'));
+    if (incoming.length === 0) return;
+    const remainingSlots = Math.max(0, GEMINI_MAX_IMAGE_COUNT - geminiImageAttachments.length);
+    if (remainingSlots === 0) {
+      setError(`You can attach up to ${GEMINI_MAX_IMAGE_COUNT} images.`);
+      return;
+    }
+    try {
+      const accepted = incoming
+        .filter((file) => {
+          if (file.size <= GEMINI_MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+            return true;
+          }
+          setError(`Image "${file.name}" exceeds ${GEMINI_MAX_IMAGE_SIZE_MB}MB.`);
+          return false;
+        })
+        .slice(0, remainingSlots);
+      const processed = await Promise.all(
+        accepted.map(async (file, index) => {
+          const dataUrl = await readImageAsDataUrl(file);
+          const base64 = typeof dataUrl === 'string' && dataUrl.includes(',')
+            ? dataUrl.split(',')[1]
+            : '';
+          return {
+            id: `${Date.now()}_${index}_${file.name}`,
+            name: file.name,
+            size: file.size,
+            mimeType: file.type,
+            previewUrl: dataUrl,
+            base64
+          };
+        })
+      );
+      setGeminiImageAttachments((prev) => [...prev, ...processed]);
+    } catch (error) {
+      console.error('Failed to add image attachments', error);
+      setError('Failed to load one of the images.');
+    }
+  };
+
+  const handleGeminiRemoveAttachment = (id) => {
+    setGeminiImageAttachments((prev) => prev.filter((item) => item.id !== id));
   };
 
   const handleSpreadsheetUpload = async (file) => {
@@ -464,6 +698,204 @@ function App() {
     }
   };
 
+  const handleDocUpload = async (file) => {
+    console.log('Uploading DOCX:', file.name);
+    setLoading(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch('http://localhost:8000/upload/doc', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Failed to upload DOCX. Please try again.';
+        try {
+          const errorData = await response.json();
+          if (errorData && errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (parseError) {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        }
+        console.error('Error response:', errorMessage);
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      console.log('DOCX upload successful, client ID:', data.client_id);
+      setClientId(data.client_id);
+      setSessionMode('doc');
+      setSelectionSummary(null);
+      setDocText(data.text || '');
+      addUploadHistory({
+        clientId: data.client_id,
+        filename: data.filename || file.name,
+        type: 'doc',
+        uploadedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error uploading DOCX:', error);
+      setError(error?.message || 'Failed to upload DOCX. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGeminiSpreadsheetUpload = async (file) => {
+    console.log('Uploading file for Gemini:', file.name);
+    setLoading(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch('http://localhost:8000/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Failed to upload file. Please try again.';
+        try {
+          const errorData = await response.json();
+          if (errorData && errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (parseError) {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      setGeminiClientId(data.client_id);
+      setGeminiSessionMode('spreadsheet');
+      setGeminiExcelData(null);
+      addUploadHistory({
+        clientId: data.client_id,
+        filename: file.name,
+        type: 'spreadsheet',
+        uploadedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error uploading Gemini file:', error);
+      setError(error?.message || 'Failed to upload file. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGeminiPdfUpload = async (file) => {
+    console.log('Uploading PDF for Gemini:', file.name);
+    setLoading(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch('http://localhost:8000/upload/pdf', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Failed to upload PDF. Please try again.';
+        try {
+          const errorData = await response.json();
+          if (errorData && errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (parseError) {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      setGeminiClientId(data.client_id);
+      setGeminiSessionMode('pdf');
+      setGeminiFilename(data.filename || file.name);
+      setGeminiPdfUrl(data.file_url ? `http://localhost:8000${data.file_url}` : null);
+      addUploadHistory({
+        clientId: data.client_id,
+        filename: data.filename || file.name,
+        type: 'pdf',
+        fileUrl: data.file_url ? `http://localhost:8000${data.file_url}` : null,
+        uploadedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error uploading Gemini PDF:', error);
+      setError(error?.message || 'Failed to upload PDF. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGeminiDocUpload = async (file) => {
+    console.log('Uploading DOCX for Gemini:', file.name);
+    setLoading(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch('http://localhost:8000/upload/doc', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Failed to upload DOCX. Please try again.';
+        try {
+          const errorData = await response.json();
+          if (errorData && errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (parseError) {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      setGeminiClientId(data.client_id);
+      setGeminiSessionMode('doc');
+      setGeminiDocText(data.text || '');
+      setGeminiFilename(data.filename || file.name);
+      addUploadHistory({
+        clientId: data.client_id,
+        filename: data.filename || file.name,
+        type: 'doc',
+        uploadedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error uploading Gemini DOCX:', error);
+      setError(error?.message || 'Failed to upload DOCX. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const sendMessage = (message) => {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setError('Connection lost. Please refresh the page.');
@@ -513,6 +945,53 @@ function App() {
     setIsWaiting(true);
   };
 
+  const sendGeminiMessage = (message) => {
+    if (!geminiSocket || geminiSocket.readyState !== WebSocket.OPEN) {
+      setError('Gemini connection lost. Please refresh the page.');
+      return;
+    }
+
+    const hasImages = geminiImageAttachments.length > 0;
+    const trimmedMessage = message.trim();
+    const finalMessage = trimmedMessage || (hasImages ? 'Describe the image.' : '');
+    if (!finalMessage && !hasImages) return;
+
+    const messageAttachments = geminiImageAttachments.map((attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      previewUrl: attachment.previewUrl
+    }));
+    setGeminiMessages(prev => [...prev, {
+      role: 'user',
+      content: finalMessage,
+      attachments: messageAttachments
+    }]);
+
+    const selectedModel = geminiModelOptions.find((model) => model.id === geminiSelectedModelId)
+      || geminiModelOptions[0];
+
+    const nextRequestId = `gemini_req_${Date.now()}_${geminiRequestCounter}`;
+    setGeminiRequestCounter((prev) => prev + 1);
+    geminiPendingRequestIdRef.current = nextRequestId;
+    geminiLatestRequestIdRef.current = nextRequestId;
+
+    geminiSocket.send(JSON.stringify({
+      message: finalMessage,
+      request_id: nextRequestId,
+      model_provider: selectedModel.provider,
+      model_id: selectedModel.model,
+      model_params: {},
+      image_attachments: geminiImageAttachments.map((attachment) => ({
+        mime_type: attachment.mimeType,
+        data: attachment.base64
+      }))
+    }));
+    setGeminiIsWaiting(true);
+    if (hasImages) {
+      setGeminiImageAttachments([]);
+    }
+  };
+
   const handleInsertReference = (text) => {
     setChatDraft((prev) => {
       if (!prev) return text;
@@ -556,8 +1035,25 @@ function App() {
     setSessionMode(null);
     setPdfUrl(null);
     setPdfFilename('');
+    setDocText('');
     setSelectionSummary(null);
     setSelectedMode('spreadsheet');
+  };
+
+  const handleGeminiBackToUpload = () => {
+    if (geminiSocket) {
+      geminiSocket.close();
+    }
+    setGeminiSocket(null);
+    setGeminiClientId(null);
+    setGeminiExcelData(null);
+    setGeminiMessages([]);
+    setGeminiSessionMode(null);
+    setGeminiPdfUrl(null);
+    setGeminiFilename('');
+    setGeminiDocText('');
+    setGeminiSelectedMode('spreadsheet');
+    setGeminiImageAttachments([]);
   };
 
   const handleResizeStart = (e) => {
@@ -614,395 +1110,687 @@ function App() {
 
   return (
     <div className={`app-container ${isResizing ? 'is-resizing' : ''}`}>
-      {!clientId ? (
-        <div className="upload-shell">
-          <aside className="side-nav" aria-label="Upload modes">
-            <h3>Upload Modes</h3>
-            <div className="nav-items">
-              {uploadModes.map((mode) => (
-                <button
-                  key={mode.id}
-                  type="button"
-                  className={selectedMode === mode.id && !showUploadManager && !showSettings ? 'active' : ''}
-                  onClick={() => setSelectedMode(mode.id)}
-                >
-                  <span>{mode.label}</span>
-                  <small>{mode.hint}</small>
-                  {mode.comingSoon && <em>Coming soon</em>}
-                </button>
-              ))}
-            </div>
-            <div className="test-toggle">
-              <div className="test-toggle-row">
-                <span>Bedrock attachment test</span>
-                {useBedrockAttachment && <span className="test-toggle-status">Active</span>}
+      <header className="app-nav">
+        <div className="app-nav-left">
+          <button
+            type="button"
+            className={`app-nav-button ${activeWorkspace === 'default' ? 'active' : ''}`}
+            onClick={() => setActiveWorkspace('default')}
+          >
+            ExcelFlow
+          </button>
+        </div>
+        <div className="app-nav-right">
+          <button
+            type="button"
+            className={`app-nav-button ${activeWorkspace === 'gemini' ? 'active' : ''}`}
+            onClick={() => setActiveWorkspace('gemini')}
+          >
+            Gemini
+          </button>
+        </div>
+      </header>
+      {activeWorkspace === 'gemini' ? (
+        !geminiClientId ? (
+          <div className="upload-shell">
+            <aside className="side-nav" aria-label="Gemini upload modes">
+              <h3>Gemini Upload</h3>
+              <div className="nav-items">
+                {uploadModes.map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    className={geminiSelectedMode === mode.id && !showUploadManager ? 'active' : ''}
+                    onClick={() => setGeminiSelectedMode(mode.id)}
+                  >
+                    <span>{mode.label}</span>
+                    <small>{mode.hint}</small>
+                    {mode.comingSoon && <em>Coming soon</em>}
+                  </button>
+                ))}
               </div>
-              <small>Send Excel as base64 attachment (Bedrock only).</small>
-              <div className="test-toggle-actions">
-                <button
-                  type="button"
-                  className="test-toggle-button"
-                  disabled={selectedMode !== 'spreadsheet'}
-                  onClick={() => {
-                    try {
-                      const url = new URL(window.location.href);
-                      url.searchParams.set('bedrockAttachment', '1');
-                      window.open(url.toString(), '_blank', 'noopener');
-                    } catch (error) {
-                      console.warn('Failed to open test window', error);
+              <div className="upload-history">
+                <div className="upload-history-header">
+                  <h4>Recent Uploads</h4>
+                  <div className="upload-history-actions">
+                    <button
+                      type="button"
+                      className={showUploadManager ? 'active' : ''}
+                      onClick={() => setShowUploadManager(true)}
+                    >
+                      Manage
+                    </button>
+                  </div>
+                </div>
+                <p>{uploadHistory.length} uploads</p>
+              </div>
+            </aside>
+            <div className="upload-content">
+              {showUploadManager ? (
+                <div className="upload-manager">
+                  <div className="upload-manager-header">
+                    <div>
+                      <h2>All Uploads</h2>
+                      <p>Search and reopen any uploaded file.</p>
+                    </div>
+                    <button type="button" onClick={() => setShowUploadManager(false)}>
+                      Close
+                    </button>
+                  </div>
+                  <div className="upload-manager-search">
+                    <input
+                      type="text"
+                      placeholder="Search by filename or type"
+                      value={uploadSearch}
+                      onChange={(event) => setUploadSearch(event.target.value)}
+                    />
+                  </div>
+                  <div className="upload-manager-controls">
+                    <div className="upload-filter">
+                      <button
+                        type="button"
+                        className={uploadFilterType === 'all' ? 'active' : ''}
+                        onClick={() => setUploadFilterType('all')}
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        className={uploadFilterType === 'spreadsheet' ? 'active' : ''}
+                        onClick={() => setUploadFilterType('spreadsheet')}
+                      >
+                        Spreadsheets
+                      </button>
+                      <button
+                        type="button"
+                        className={uploadFilterType === 'pdf' ? 'active' : ''}
+                        onClick={() => setUploadFilterType('pdf')}
+                      >
+                        PDFs
+                      </button>
+                      <button
+                        type="button"
+                        className={uploadFilterType === 'doc' ? 'active' : ''}
+                        onClick={() => setUploadFilterType('doc')}
+                      >
+                        DOCX
+                      </button>
+                    </div>
+                    <div className="upload-sort">
+                      <label htmlFor="upload-sort-gemini">Sort</label>
+                      <select
+                        id="upload-sort-gemini"
+                        value={uploadSort}
+                        onChange={(event) => setUploadSort(event.target.value)}
+                      >
+                        <option value="newest">Newest</option>
+                        <option value="oldest">Oldest</option>
+                        <option value="name">A–Z</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="upload-manager-meta">
+                    {uploadHistory.length} uploads total. Showing {filteredUploads.length}.
+                  </div>
+                  {filteredUploads.length === 0 ? (
+                    <div className="upload-manager-empty">No uploads match your search.</div>
+                  ) : (
+                    <div className="upload-manager-list">
+                      {filteredUploads.map((entry) => (
+                        <div className="upload-manager-item" key={entry.clientId}>
+                          <div className="upload-history-main">
+                            <span className={`upload-type ${entry.type}`}>{entry.type}</span>
+                            <strong>{entry.filename}</strong>
+                          </div>
+                          <span className="upload-time">{formatUploadTime(entry.uploadedAt)}</span>
+                          <div className="upload-actions">
+                            <button type="button" onClick={() => openGeminiUploadSession(entry)}>
+                              Open
+                            </button>
+                            <button type="button" onClick={() => removeUploadHistory(entry.clientId)}>
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : geminiSelectedMode === 'spreadsheet' ? (
+                <FileUpload onFileUpload={handleGeminiSpreadsheetUpload} loading={loading} error={error} />
+              ) : geminiSelectedMode === 'pdf' ? (
+                <PdfUpload onFileUpload={handleGeminiPdfUpload} loading={loading} error={error} />
+              ) : geminiSelectedMode === 'doc' ? (
+                <DocUpload onFileUpload={handleGeminiDocUpload} loading={loading} error={error} />
+              ) : (
+                <div className="mode-placeholder">
+                  <h2>{uploadModes.find((mode) => mode.id === geminiSelectedMode)?.label}</h2>
+                  <p>This upload type is not available yet.</p>
+                  <p>Select Spreadsheet to continue.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="main-content">
+            <div className="excel-container" style={{ flexBasis: `${leftPanelWidth}%` }}>
+              {geminiSessionMode === 'spreadsheet' ? (
+                geminiExcelData ? (
+                  <ExcelViewer
+                    data={geminiExcelData.data}
+                    metadata={geminiExcelData.metadata}
+                    onBack={handleGeminiBackToUpload}
+                    onSelectionSummaryChange={() => {}}
+                    clearSelectionToken={0}
+                  />
+                ) : (
+                  <div className="loading">Loading Excel data...</div>
+                )
+              ) : (
+                geminiSessionMode === 'doc' ? (
+                  <DocViewer
+                    filename={geminiFilename}
+                    text={geminiDocText}
+                    onBack={handleGeminiBackToUpload}
+                  />
+                ) : (
+                  <PdfViewer
+                    pdfUrl={geminiPdfUrl}
+                    filename={geminiFilename}
+                    onBack={handleGeminiBackToUpload}
+                  />
+                )
+              )}
+            </div>
+            <div
+              className="resize-handle"
+              role="separator"
+              aria-label="Resize panels"
+              onMouseDown={handleResizeStart}
+            />
+            <div className="chat-sidebar">
+              <ChatInterface
+                messages={geminiMessages}
+                onSendMessage={sendGeminiMessage}
+                modelOptions={geminiModelOptions}
+                selectedModelId={geminiSelectedModelId}
+                onModelChange={setGeminiSelectedModelId}
+                inputValue={geminiChatDraft}
+                onInputChange={setGeminiChatDraft}
+                isWaiting={geminiIsWaiting}
+                onStop={() => {
+                  const pendingId = geminiPendingRequestIdRef.current;
+                  if (pendingId && geminiSocket && geminiSocket.readyState === WebSocket.OPEN) {
+                    geminiSocket.send(JSON.stringify({
+                      type: 'cancel',
+                      request_id: pendingId
+                    }));
+                  }
+                  if (pendingId) {
+                    geminiCanceledRequestIdsRef.current.add(pendingId);
+                  }
+                  setGeminiIsWaiting(false);
+                }}
+                allowImageUpload
+                attachments={geminiImageAttachments}
+                onAddAttachments={handleGeminiAddAttachments}
+                onRemoveAttachment={handleGeminiRemoveAttachment}
+                modeBadge="Gemini"
+                onClearMessages={async () => {
+                  if (!geminiClientId) {
+                    setGeminiMessages([]);
+                    return;
+                  }
+                  try {
+                    const response = await fetch(`http://localhost:8000/sessions/gemini/${geminiClientId}`, {
+                      method: 'DELETE'
+                    });
+                    if (!response.ok && response.status !== 404) {
+                      throw new Error('Failed to clear session');
                     }
-                  }}
-                >
-                  Open test window
-                </button>
-                {useBedrockAttachment && (
+                  } catch (error) {
+                    console.error('Error clearing Gemini session:', error);
+                  }
+                  setGeminiMessages([]);
+                }}
+                title={geminiSessionMode === 'pdf'
+                  ? 'Gemini PDF Analyst'
+                  : geminiSessionMode === 'doc'
+                    ? 'Gemini Document Analyst'
+                    : 'Gemini Spreadsheet Analyst'}
+                placeholder={geminiSessionMode === 'pdf'
+                  ? 'Ask about your PDF...'
+                  : geminiSessionMode === 'doc'
+                    ? 'Ask about your document...'
+                    : 'Ask about your spreadsheet...'}
+                emptyStateText={geminiSessionMode === 'pdf'
+                  ? 'Start chatting with Gemini about the PDF'
+                  : geminiSessionMode === 'doc'
+                    ? 'Start chatting with Gemini about the document'
+                    : 'Start chatting with Gemini about the spreadsheet'
+                }
+              />
+            </div>
+          </div>
+        )
+      ) : (
+        !clientId ? (
+          <div className="upload-shell">
+            <aside className="side-nav" aria-label="Upload modes">
+              <h3>Upload Modes</h3>
+              <div className="nav-items">
+                {uploadModes.map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    className={selectedMode === mode.id && !showUploadManager && !showSettings ? 'active' : ''}
+                    onClick={() => setSelectedMode(mode.id)}
+                  >
+                    <span>{mode.label}</span>
+                    <small>{mode.hint}</small>
+                    {mode.comingSoon && <em>Coming soon</em>}
+                  </button>
+                ))}
+              </div>
+              <div className="test-toggle">
+                <div className="test-toggle-row">
+                  <span>Bedrock attachment test</span>
+                  {useBedrockAttachment && <span className="test-toggle-status">Active</span>}
+                </div>
+                <small>Send Excel as base64 attachment (Bedrock only).</small>
+                <div className="test-toggle-actions">
                   <button
                     type="button"
                     className="test-toggle-button"
+                    disabled={selectedMode !== 'spreadsheet'}
                     onClick={() => {
                       try {
                         const url = new URL(window.location.href);
-                        url.searchParams.delete('bedrockAttachment');
-                        window.location.href = url.toString();
+                        url.searchParams.set('bedrockAttachment', '1');
+                        window.open(url.toString(), '_blank', 'noopener');
                       } catch (error) {
-                        console.warn('Failed to disable test mode', error);
+                        console.warn('Failed to open test window', error);
                       }
                     }}
                   >
-                    Disable
+                    Open test window
                   </button>
-                )}
-              </div>
-            </div>
-            <div className="upload-history">
-              <div className="upload-history-header">
-                <h4>Recent Uploads</h4>
-                <div className="upload-history-actions">
-                  <button
-                    type="button"
-                    className={showUploadManager ? 'active' : ''}
-                    onClick={() => {
-                      setShowUploadManager(true);
-                      setShowSettings(false);
-                    }}
-                  >
-                    Manage
-                  </button>
+                  {useBedrockAttachment && (
+                    <button
+                      type="button"
+                      className="test-toggle-button"
+                      onClick={() => {
+                        try {
+                          const url = new URL(window.location.href);
+                          url.searchParams.delete('bedrockAttachment');
+                          window.location.href = url.toString();
+                        } catch (error) {
+                          console.warn('Failed to disable test mode', error);
+                        }
+                      }}
+                    >
+                      Disable
+                    </button>
+                  )}
                 </div>
               </div>
-              <p>{uploadHistory.length} uploads</p>
-            </div>
-            <button
-              type="button"
-              className={`settings-button ${showSettings ? 'active' : ''}`}
-              onClick={() => {
-                setShowSettings(true);
-                setShowUploadManager(false);
-                setSettingsModelId(null);
-              }}
-            >
-              <FiSettings />
-              Settings
-            </button>
-          </aside>
-          <div className="upload-content">
-            {showSettings ? (
-              <div className="model-settings-panel">
-                <div className="model-settings-header">
-                  <div>
-                    <h2>Model Settings</h2>
-                    <p>Choose a model, then customize its parameters.</p>
+              <div className="upload-history">
+                <div className="upload-history-header">
+                  <h4>Recent Uploads</h4>
+                  <div className="upload-history-actions">
+                    <button
+                      type="button"
+                      className={showUploadManager ? 'active' : ''}
+                      onClick={() => {
+                        setShowUploadManager(true);
+                        setShowSettings(false);
+                      }}
+                    >
+                      Manage
+                    </button>
                   </div>
-                  <button type="button" onClick={() => setShowSettings(false)}>
+                </div>
+                <p>{uploadHistory.length} uploads</p>
+              </div>
+              <button
+                type="button"
+                className={`settings-button ${showSettings ? 'active' : ''}`}
+                onClick={() => {
+                  setShowSettings(true);
+                  setShowUploadManager(false);
+                  setSettingsModelId(null);
+                }}
+              >
+                <FiSettings />
+                Settings
+              </button>
+            </aside>
+            <div className="upload-content">
+              {showSettings ? (
+                <div className="model-settings-panel">
+                  <div className="model-settings-header">
+                    <div>
+                      <h2>Model Settings</h2>
+                      <p>Choose a model, then customize its parameters.</p>
+                    </div>
+                    <button type="button" onClick={() => setShowSettings(false)}>
+                      Close
+                    </button>
+                  </div>
+                  {!settingsModelId ? (
+                    <div className="model-settings-chooser">
+                      {modelOptions.map((model) => (
+                        <button
+                          key={model.id}
+                          type="button"
+                          className="model-option"
+                          onClick={() => setSettingsModelId(model.id)}
+                        >
+                          <span>{model.label}</span>
+                          <small>{model.provider}</small>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="model-settings-controls">
+                        <button
+                          type="button"
+                          className="model-settings-back"
+                          onClick={() => setSettingsModelId(null)}
+                        >
+                          Back
+                        </button>
+                        <button
+                          type="button"
+                          className="model-settings-reset"
+                          onClick={() =>
+                            setModelParamsByModel((prev) => ({
+                              ...prev,
+                              [settingsModelId]: { ...defaultModelParams }
+                            }))
+                          }
+                        >
+                          Reset to default
+                        </button>
+                      </div>
+                      <div className="model-setting-row">
+                        <label htmlFor="param-temperature">Temperature</label>
+                        <input
+                          id="param-temperature"
+                          type="number"
+                          min="0"
+                          max="2"
+                          step="0.1"
+                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).temperature}
+                          onChange={(event) => handleParamChange('temperature', event.target.value, 'float')}
+                        />
+                      </div>
+                      <div className="model-setting-row">
+                        <label htmlFor="param-maxTokens">Max tokens</label>
+                        <input
+                          id="param-maxTokens"
+                          type="number"
+                          min="256"
+                          max="8192"
+                          step="128"
+                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).maxTokens}
+                          onChange={(event) => handleParamChange('maxTokens', event.target.value, 'int')}
+                        />
+                      </div>
+                      <div className="model-setting-row">
+                        <label htmlFor="param-topP">Top P</label>
+                        <input
+                          id="param-topP"
+                          type="number"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).topP}
+                          onChange={(event) => handleParamChange('topP', event.target.value, 'float')}
+                        />
+                      </div>
+                      <div className="model-setting-row">
+                        <label htmlFor="param-presencePenalty">Presence penalty</label>
+                        <input
+                          id="param-presencePenalty"
+                          type="number"
+                          min="-2"
+                          max="2"
+                          step="0.1"
+                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).presencePenalty}
+                          onChange={(event) => handleParamChange('presencePenalty', event.target.value, 'float')}
+                        />
+                      </div>
+                      <div className="model-setting-row">
+                        <label htmlFor="param-frequencyPenalty">Frequency penalty</label>
+                        <input
+                          id="param-frequencyPenalty"
+                          type="number"
+                          min="-2"
+                          max="2"
+                          step="0.1"
+                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).frequencyPenalty}
+                          onChange={(event) => handleParamChange('frequencyPenalty', event.target.value, 'float')}
+                        />
+                      </div>
+                      <p className="model-settings-note">
+                        Penalties apply to OpenAI models. Bedrock uses temperature or top_p plus max_tokens.
+                      </p>
+                    </>
+                  )}
+                </div>
+              ) : showUploadManager ? (
+                <div className="upload-manager">
+                <div className="upload-manager-header">
+                  <div>
+                    <h2>All Uploads</h2>
+                    <p>Search and reopen any uploaded file.</p>
+                  </div>
+                  <button type="button" onClick={() => setShowUploadManager(false)}>
                     Close
                   </button>
                 </div>
-                {!settingsModelId ? (
-                  <div className="model-settings-chooser">
-                    {modelOptions.map((model) => (
-                      <button
-                        key={model.id}
-                        type="button"
-                        className="model-option"
-                        onClick={() => setSettingsModelId(model.id)}
-                      >
-                        <span>{model.label}</span>
-                        <small>{model.provider}</small>
-                      </button>
-                    ))}
+                <div className="upload-manager-search">
+                  <input
+                    type="text"
+                    placeholder="Search by filename or type"
+                    value={uploadSearch}
+                    onChange={(event) => setUploadSearch(event.target.value)}
+                  />
+                </div>
+                <div className="upload-manager-controls">
+                  <div className="upload-filter">
+                    <button
+                      type="button"
+                      className={uploadFilterType === 'all' ? 'active' : ''}
+                      onClick={() => setUploadFilterType('all')}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      className={uploadFilterType === 'spreadsheet' ? 'active' : ''}
+                      onClick={() => setUploadFilterType('spreadsheet')}
+                    >
+                      Spreadsheets
+                    </button>
+                    <button
+                      type="button"
+                      className={uploadFilterType === 'pdf' ? 'active' : ''}
+                      onClick={() => setUploadFilterType('pdf')}
+                    >
+                      PDFs
+                    </button>
+                    <button
+                      type="button"
+                      className={uploadFilterType === 'doc' ? 'active' : ''}
+                      onClick={() => setUploadFilterType('doc')}
+                    >
+                      DOCX
+                    </button>
                   </div>
+                  <div className="upload-sort">
+                    <label htmlFor="upload-sort">Sort</label>
+                    <select
+                      id="upload-sort"
+                      value={uploadSort}
+                      onChange={(event) => setUploadSort(event.target.value)}
+                    >
+                      <option value="newest">Newest</option>
+                      <option value="oldest">Oldest</option>
+                      <option value="name">A–Z</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="upload-manager-meta">
+                  {uploadHistory.length} uploads total. Showing {filteredUploads.length}.
+                </div>
+                {filteredUploads.length === 0 ? (
+                  <div className="upload-manager-empty">No uploads match your search.</div>
                 ) : (
-                  <>
-                    <div className="model-settings-controls">
-                      <button
-                        type="button"
-                        className="model-settings-back"
-                        onClick={() => setSettingsModelId(null)}
-                      >
-                        Back
-                      </button>
-                      <button
-                        type="button"
-                        className="model-settings-reset"
-                        onClick={() =>
-                          setModelParamsByModel((prev) => ({
-                            ...prev,
-                            [settingsModelId]: { ...defaultModelParams }
-                          }))
-                        }
-                      >
-                        Reset to default
-                      </button>
-                    </div>
-                    <div className="model-setting-row">
-                      <label htmlFor="param-temperature">Temperature</label>
-                      <input
-                        id="param-temperature"
-                        type="number"
-                        min="0"
-                        max="2"
-                        step="0.1"
-                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).temperature}
-                        onChange={(event) => handleParamChange('temperature', event.target.value, 'float')}
-                      />
-                    </div>
-                    <div className="model-setting-row">
-                      <label htmlFor="param-maxTokens">Max tokens</label>
-                      <input
-                        id="param-maxTokens"
-                        type="number"
-                        min="256"
-                        max="8192"
-                        step="128"
-                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).maxTokens}
-                        onChange={(event) => handleParamChange('maxTokens', event.target.value, 'int')}
-                      />
-                    </div>
-                    <div className="model-setting-row">
-                      <label htmlFor="param-topP">Top P</label>
-                      <input
-                        id="param-topP"
-                        type="number"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).topP}
-                        onChange={(event) => handleParamChange('topP', event.target.value, 'float')}
-                      />
-                    </div>
-                    <div className="model-setting-row">
-                      <label htmlFor="param-presencePenalty">Presence penalty</label>
-                      <input
-                        id="param-presencePenalty"
-                        type="number"
-                        min="-2"
-                        max="2"
-                        step="0.1"
-                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).presencePenalty}
-                        onChange={(event) => handleParamChange('presencePenalty', event.target.value, 'float')}
-                      />
-                    </div>
-                    <div className="model-setting-row">
-                      <label htmlFor="param-frequencyPenalty">Frequency penalty</label>
-                      <input
-                        id="param-frequencyPenalty"
-                        type="number"
-                        min="-2"
-                        max="2"
-                        step="0.1"
-                        value={(modelParamsByModel[settingsModelId] || defaultModelParams).frequencyPenalty}
-                        onChange={(event) => handleParamChange('frequencyPenalty', event.target.value, 'float')}
-                      />
-                    </div>
-                    <p className="model-settings-note">
-                      Penalties apply to OpenAI models. Bedrock uses temperature or top_p plus max_tokens.
-                    </p>
-                  </>
-                )}
-              </div>
-            ) : showUploadManager ? (
-              <div className="upload-manager">
-              <div className="upload-manager-header">
-                <div>
-                  <h2>All Uploads</h2>
-                  <p>Search and reopen any uploaded file.</p>
-                </div>
-                <button type="button" onClick={() => setShowUploadManager(false)}>
-                  Close
-                </button>
-              </div>
-              <div className="upload-manager-search">
-                <input
-                  type="text"
-                  placeholder="Search by filename or type"
-                  value={uploadSearch}
-                  onChange={(event) => setUploadSearch(event.target.value)}
-                />
-              </div>
-              <div className="upload-manager-controls">
-                <div className="upload-filter">
-                  <button
-                    type="button"
-                    className={uploadFilterType === 'all' ? 'active' : ''}
-                    onClick={() => setUploadFilterType('all')}
-                  >
-                    All
-                  </button>
-                  <button
-                    type="button"
-                    className={uploadFilterType === 'spreadsheet' ? 'active' : ''}
-                    onClick={() => setUploadFilterType('spreadsheet')}
-                  >
-                    Spreadsheets
-                  </button>
-                  <button
-                    type="button"
-                    className={uploadFilterType === 'pdf' ? 'active' : ''}
-                    onClick={() => setUploadFilterType('pdf')}
-                  >
-                    PDFs
-                  </button>
-                </div>
-                <div className="upload-sort">
-                  <label htmlFor="upload-sort">Sort</label>
-                  <select
-                    id="upload-sort"
-                    value={uploadSort}
-                    onChange={(event) => setUploadSort(event.target.value)}
-                  >
-                    <option value="newest">Newest</option>
-                    <option value="oldest">Oldest</option>
-                    <option value="name">A–Z</option>
-                  </select>
-                </div>
-              </div>
-              <div className="upload-manager-meta">
-                {uploadHistory.length} uploads total. Showing {filteredUploads.length}.
-              </div>
-              {filteredUploads.length === 0 ? (
-                <div className="upload-manager-empty">No uploads match your search.</div>
-              ) : (
-                  <div className="upload-manager-list">
-                    {filteredUploads.map((entry) => (
-                      <div className="upload-manager-item" key={entry.clientId}>
-                        <div className="upload-history-main">
-                          <span className={`upload-type ${entry.type}`}>{entry.type}</span>
-                          <strong>{entry.filename}</strong>
+                    <div className="upload-manager-list">
+                      {filteredUploads.map((entry) => (
+                        <div className="upload-manager-item" key={entry.clientId}>
+                          <div className="upload-history-main">
+                            <span className={`upload-type ${entry.type}`}>{entry.type}</span>
+                            <strong>{entry.filename}</strong>
+                          </div>
+                          <span className="upload-time">{formatUploadTime(entry.uploadedAt)}</span>
+                          <div className="upload-actions">
+                            <button type="button" onClick={() => openUploadSession(entry)}>
+                              Open
+                            </button>
+                            <button type="button" onClick={() => removeUploadHistory(entry.clientId)}>
+                              Remove
+                            </button>
+                          </div>
                         </div>
-                        <span className="upload-time">{formatUploadTime(entry.uploadedAt)}</span>
-                        <div className="upload-actions">
-                          <button type="button" onClick={() => openUploadSession(entry)}>
-                            Open
-                          </button>
-                          <button type="button" onClick={() => removeUploadHistory(entry.clientId)}>
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : selectedMode === 'spreadsheet' ? (
-              <FileUpload onFileUpload={handleSpreadsheetUpload} loading={loading} error={error} />
-            ) : selectedMode === 'pdf' ? (
-              <PdfUpload onFileUpload={handlePdfUpload} loading={loading} error={error} />
-            ) : (
-              <div className="mode-placeholder">
-                <h2>{uploadModes.find((mode) => mode.id === selectedMode)?.label}</h2>
-                <p>This upload type is not available yet.</p>
-                <p>Select Spreadsheet to continue.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="main-content">
-          <div className="excel-container" style={{ flexBasis: `${leftPanelWidth}%` }}>
-            {sessionMode === 'spreadsheet' ? (
-              excelData ? (
-                <ExcelViewer
-                  data={excelData.data}
-                  metadata={excelData.metadata}
-                  onBack={handleBackToUpload}
-                  onSelectionSummaryChange={setSelectionSummary}
-                  clearSelectionToken={clearSelectionToken}
-                />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : selectedMode === 'spreadsheet' ? (
+                <FileUpload onFileUpload={handleSpreadsheetUpload} loading={loading} error={error} />
+              ) : selectedMode === 'pdf' ? (
+                <PdfUpload onFileUpload={handlePdfUpload} loading={loading} error={error} />
+              ) : selectedMode === 'doc' ? (
+                <DocUpload onFileUpload={handleDocUpload} loading={loading} error={error} />
               ) : (
-                <div className="loading">Loading Excel data...</div>
-              )
-            ) : (
-              <PdfViewer
-                pdfUrl={pdfUrl}
-                filename={pdfFilename}
-                onBack={handleBackToUpload}
-              />
-            )}
+                <div className="mode-placeholder">
+                  <h2>{uploadModes.find((mode) => mode.id === selectedMode)?.label}</h2>
+                  <p>This upload type is not available yet.</p>
+                  <p>Select Spreadsheet to continue.</p>
+                </div>
+              )}
+            </div>
           </div>
-          <div
-            className="resize-handle"
-            role="separator"
-            aria-label="Resize panels"
-            onMouseDown={handleResizeStart}
-          />
-          <div className="chat-sidebar">
-            <ChatInterface 
-              messages={messages} 
-              onSendMessage={sendMessage}
-              modelOptions={modelOptions}
-              selectedModelId={selectedModelId}
-              onModelChange={setSelectedModelId}
-              inputValue={chatDraft}
-              onInputChange={setChatDraft}
-              isWaiting={isWaiting}
-              onStop={() => {
-                const pendingId = pendingRequestIdRef.current;
-                if (pendingId && socket && socket.readyState === WebSocket.OPEN) {
-                  socket.send(JSON.stringify({
-                    type: 'cancel',
-                    request_id: pendingId
-                  }));
-                }
-                if (pendingId) {
-                  canceledRequestIdsRef.current.add(pendingId);
-                } else {
-                  setIgnoreNextResponse(true);
-                }
-                setIsWaiting(false);
-              }}
-              modeBadge={useBedrockAttachment
-                ? 'Bedrock Attachment Test'
-                : 'Standard'}
-              focusToken={focusInputToken}
-              onClearMessages={async () => {
-                if (!clientId) {
-                  setMessages([]);
-                  return;
-                }
-                try {
-                  const response = await fetch(`http://localhost:8000/sessions/${clientId}`, {
-                    method: 'DELETE'
-                  });
-                  if (!response.ok && response.status !== 404) {
-                    throw new Error('Failed to clear session');
-                  }
-                } catch (error) {
-                  console.error('Error clearing session:', error);
-                }
-                setMessages([]);
-              }}
-              title={sessionMode === 'pdf' ? 'PDF Analyst Chat' : 'Excel Agent Chat'}
-              placeholder={sessionMode === 'pdf' ? 'Ask about your PDF...' : 'Ask about your Excel data...'}
-              emptyStateText={sessionMode === 'pdf'
-                ? 'Start chatting with the PDF analyst'
-                : 'Start chatting with the Excel Agent'
-              }
-              selectionSummary={sessionMode === 'spreadsheet' ? selectionSummary : null}
-              onReferenceSelection={handleReferenceSelection}
-              onClearSelection={handleClearSelection}
+        ) : (
+          <div className="main-content">
+            <div className="excel-container" style={{ flexBasis: `${leftPanelWidth}%` }}>
+              {sessionMode === 'spreadsheet' ? (
+                excelData ? (
+                  <ExcelViewer
+                    data={excelData.data}
+                    metadata={excelData.metadata}
+                    onBack={handleBackToUpload}
+                    onSelectionSummaryChange={setSelectionSummary}
+                    clearSelectionToken={clearSelectionToken}
+                  />
+                ) : (
+                  <div className="loading">Loading Excel data...</div>
+                )
+              ) : (
+                sessionMode === 'doc' ? (
+                  <DocViewer
+                    filename={pdfFilename}
+                    text={docText}
+                    onBack={handleBackToUpload}
+                  />
+                ) : (
+                  <PdfViewer
+                    pdfUrl={pdfUrl}
+                    filename={pdfFilename}
+                    onBack={handleBackToUpload}
+                  />
+                )
+              )}
+            </div>
+            <div
+              className="resize-handle"
+              role="separator"
+              aria-label="Resize panels"
+              onMouseDown={handleResizeStart}
             />
+            <div className="chat-sidebar">
+              <ChatInterface 
+                messages={messages} 
+                onSendMessage={sendMessage}
+                modelOptions={modelOptions}
+                selectedModelId={selectedModelId}
+                onModelChange={setSelectedModelId}
+                inputValue={chatDraft}
+                onInputChange={setChatDraft}
+                isWaiting={isWaiting}
+                onStop={() => {
+                  const pendingId = pendingRequestIdRef.current;
+                  if (pendingId && socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({
+                      type: 'cancel',
+                      request_id: pendingId
+                    }));
+                  }
+                  if (pendingId) {
+                    canceledRequestIdsRef.current.add(pendingId);
+                  } else {
+                    setIgnoreNextResponse(true);
+                  }
+                  setIsWaiting(false);
+                }}
+                modeBadge={useBedrockAttachment
+                  ? 'Bedrock Attachment Test'
+                  : 'Standard'}
+                focusToken={focusInputToken}
+                onClearMessages={async () => {
+                  if (!clientId) {
+                    setMessages([]);
+                    return;
+                  }
+                  try {
+                    const response = await fetch(`http://localhost:8000/sessions/${clientId}`, {
+                      method: 'DELETE'
+                    });
+                    if (!response.ok && response.status !== 404) {
+                      throw new Error('Failed to clear session');
+                    }
+                  } catch (error) {
+                    console.error('Error clearing session:', error);
+                  }
+                  setMessages([]);
+                }}
+                title={sessionMode === 'pdf'
+                  ? 'PDF Analyst Chat'
+                  : sessionMode === 'doc'
+                    ? 'Document Analyst Chat'
+                    : 'Excel Agent Chat'}
+                placeholder={sessionMode === 'pdf'
+                  ? 'Ask about your PDF...'
+                  : sessionMode === 'doc'
+                    ? 'Ask about your document...'
+                    : 'Ask about your Excel data...'}
+                emptyStateText={sessionMode === 'pdf'
+                  ? 'Start chatting with the PDF analyst'
+                  : sessionMode === 'doc'
+                    ? 'Start chatting with the document analyst'
+                    : 'Start chatting with the Excel Agent'
+                }
+                selectionSummary={sessionMode === 'spreadsheet' ? selectionSummary : null}
+                onReferenceSelection={handleReferenceSelection}
+                onClearSelection={handleClearSelection}
+              />
+            </div>
           </div>
-        </div>
+        )
       )}
     </div>
   );

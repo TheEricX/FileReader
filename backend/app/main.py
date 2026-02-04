@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import base64
 from datetime import datetime
 import pandas as pd
 from typing import Dict, Set
@@ -13,7 +14,10 @@ from dotenv import load_dotenv
 from .excel_utils import ExcelUtils
 from .agent import ExcelAgent
 from .pdf_agent import PdfAgent
+from .doc_agent import DocAgent
+from .gemini_agent import GeminiAgent
 from .pdf_utils import extract_pdf_text
+from .doc_utils import extract_docx_text
 from .persistence import (
     init_db,
     save_upload,
@@ -46,11 +50,15 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Store active connections and their associated Excel files
 active_connections: Dict[str, Dict] = {}
 active_pdf_connections: Dict[str, Dict] = {}
+active_doc_connections: Dict[str, Dict] = {}
+active_gemini_connections: Dict[str, Dict] = {}
 canceled_requests: Dict[str, Set[str]] = {}
 
 # Initialize the Excel agent
 excel_agent = ExcelAgent()
 pdf_agent = PdfAgent()
+doc_agent = DocAgent()
+gemini_agent = GeminiAgent()
 
 class ConnectionManager:
     def __init__(self):
@@ -122,10 +130,96 @@ def _build_pdf_system_message(file_path: str, filename: str) -> str:
     )
 
 
+def _build_doc_system_message(filename: str, doc_text: str) -> str:
+    return (
+        "You are a helpful document analysis assistant. "
+        "Answer questions using the provided document content. "
+        "If the answer is not in the document, say you could not find it. "
+        "Format responses clearly with short sections, blank lines between sections, and bullet points when listing items.\n\n"
+        f"Document filename: {filename}\n\n"
+        f"Document content:\n{doc_text}"
+    )
+
+
+def _gemini_session_key(client_id: str) -> str:
+    return f"gemini:{client_id}"
+
+
+def _build_gemini_excel_system_message(file_path: str) -> str:
+    file_extension = os.path.splitext(file_path)[1].lower()
+    excel_utils = ExcelUtils(file_path)
+    df = excel_utils.get_dataframe()
+    max_full_size_mb = 1
+    file_size_bytes = os.path.getsize(file_path)
+    file_size_mb = file_size_bytes / (1024 * 1024)
+    include_full_sheet = file_size_mb <= max_full_size_mb
+    if include_full_sheet:
+        preview_rows = len(df)
+        df_head_str = df.to_string()
+    else:
+        preview_rows = min(200, len(df))
+        df_head_str = df.head(preview_rows).to_string()
+    num_rows, num_cols = df.shape
+    display_rows = max(num_rows, 1)
+    display_cols = max(num_cols, 1)
+    from openpyxl.utils import get_column_letter
+    data_range = f"A1:{get_column_letter(display_cols)}{display_rows}"
+    return (
+        "You are a helpful spreadsheet analysis assistant. "
+        "You can call tools to read the spreadsheet when needed. "
+        "If the answer is not in the data, say you could not find it. "
+        "Format responses clearly with short sections, blank lines between sections, and bullet points when listing items.\n\n"
+        "Tool usage:\n"
+        "- To call a tool, respond with ONLY a JSON object (no extra text) like:\n"
+        '  {"tool":"read_excel_range","args":{"range":"A1:D20"}}\n'
+        "Available tools:\n"
+        "- read_excel_range(range) -> CSV text for the range (e.g., A1:D20)\n"
+        "- read_cell(cell) or read_cell(row, col) (row/col are 0-based)\n"
+        "- read_sheet_metadata()\n"
+        "- get_column_values(index) (0-based column index)\n"
+        "- filter_rows(col_index, value) (0-based column index)\n"
+        "- get_last_filled_row_index()\n\n"
+        f"{'Spreadsheet full content' if include_full_sheet else f'Spreadsheet preview (top {preview_rows} rows)'}:\n{df_head_str}\n\n"
+        f"Spreadsheet range: {data_range} ({num_rows} rows × {num_cols} columns)\n"
+        f"File format: {file_extension[1:].upper()}\n"
+        f"File size: {file_size_mb:.2f} MB"
+    )
+
+
+def _build_gemini_pdf_system_message(file_path: str, filename: str) -> str:
+    pdf_text = extract_pdf_text(file_path)
+    return (
+        "You are a helpful PDF analysis assistant. "
+        "Answer questions using the provided PDF content. "
+        "If the answer is not in the PDF, say you could not find it. "
+        "Format responses clearly with short sections, blank lines between sections, and bullet points when listing items.\n\n"
+        f"PDF filename: {filename}\n\n"
+        f"PDF content (truncated):\n{pdf_text}"
+    )
+
+
+def _build_gemini_doc_system_message(filename: str, doc_text: str) -> str:
+    return (
+        "You are a helpful document analysis assistant. "
+        "Answer questions using the provided document content. "
+        "If the answer is not in the document, say you could not find it. "
+        "Format responses clearly with short sections, blank lines between sections, and bullet points when listing items.\n\n"
+        f"Document filename: {filename}\n\n"
+        f"Document content:\n{doc_text}"
+    )
+
+
 def _persist_message_history(client_id: str, session_type: str, message_history: list) -> None:
     updated = update_session_message_history(client_id, message_history)
     if not updated:
         save_session(client_id, session_type, message_history)
+
+
+def _persist_gemini_message_history(client_id: str, message_history: list) -> None:
+    session_key = _gemini_session_key(client_id)
+    updated = update_session_message_history(session_key, message_history)
+    if not updated:
+        save_session(session_key, "gemini", message_history)
 
 
 def _restore_excel_session(client_id: str) -> bool:
@@ -174,9 +268,72 @@ def _restore_pdf_session(client_id: str) -> bool:
     return True
 
 
+def _restore_doc_session(client_id: str) -> bool:
+    upload = get_upload(client_id)
+    if not upload or upload["type"] != "doc":
+        return False
+    file_path = upload["file_path"]
+    filename = upload.get("filename") or os.path.basename(file_path)
+    if not os.path.exists(file_path):
+        return False
+    session = get_session(client_id)
+    if session and session["message_history"]:
+        message_history = session["message_history"]
+    else:
+        doc_text = extract_docx_text(file_path)
+        system_message = _build_doc_system_message(filename, doc_text)
+        message_history = [{"role": "system", "content": system_message}]
+        save_session(client_id, "doc", message_history)
+    active_doc_connections[client_id] = {
+        "file_path": file_path,
+        "filename": filename,
+        "doc_text": extract_docx_text(file_path),
+        "message_history": message_history
+    }
+    return True
+
+
+def _restore_gemini_session(client_id: str) -> bool:
+    upload = get_upload(client_id)
+    if not upload:
+        return False
+    file_path = upload["file_path"]
+    if not os.path.exists(file_path):
+        return False
+    filename = upload.get("filename") or os.path.basename(file_path)
+
+    session_key = _gemini_session_key(client_id)
+    session = get_session(session_key)
+    if session and session["message_history"]:
+        message_history = session["message_history"]
+    else:
+        if upload["type"] == "pdf":
+            system_message = _build_gemini_pdf_system_message(file_path, filename)
+        elif upload["type"] == "doc":
+            doc_text = extract_docx_text(file_path)
+            system_message = _build_gemini_doc_system_message(filename, doc_text)
+        else:
+            system_message = _build_gemini_excel_system_message(file_path)
+        message_history = [{"role": "system", "content": system_message}]
+        save_session(session_key, "gemini", message_history)
+
+    connection = {
+        "file_path": file_path,
+        "filename": filename,
+        "type": upload["type"],
+        "message_history": message_history
+    }
+    if upload["type"] == "doc":
+        connection["doc_text"] = extract_docx_text(file_path)
+    if upload["type"] == "spreadsheet":
+        connection["excel_utils"] = ExcelUtils(file_path)
+    active_gemini_connections[client_id] = connection
+    return True
+
+
 def _bootstrap_upload_records() -> None:
     supported_formats = {
-        ".xlsx", ".xls", ".csv", ".tsv", ".ods", ".fods", ".xlsm", ".xltx", ".xltm", ".pdf"
+        ".xlsx", ".xls", ".csv", ".tsv", ".ods", ".fods", ".xlsm", ".xltx", ".xltm", ".pdf", ".docx"
     }
     for filename in os.listdir(UPLOAD_DIR):
         file_path = os.path.join(UPLOAD_DIR, filename)
@@ -189,7 +346,12 @@ def _bootstrap_upload_records() -> None:
         client_id = os.path.splitext(filename)[0]
         if get_upload(client_id):
             continue
-        upload_type = "pdf" if ext == ".pdf" else "spreadsheet"
+        if ext == ".pdf":
+            upload_type = "pdf"
+        elif ext == ".docx":
+            upload_type = "doc"
+        else:
+            upload_type = "spreadsheet"
         uploaded_at = datetime.utcfromtimestamp(os.path.getmtime(file_path)).isoformat()
         save_upload(client_id, upload_type, file_path, filename, uploaded_at)
 
@@ -204,10 +366,26 @@ def _get_or_restore_session_messages(client_id: str) -> list:
     if upload["type"] == "pdf":
         if not _restore_pdf_session(client_id):
             return []
+    elif upload["type"] == "doc":
+        if not _restore_doc_session(client_id):
+            return []
     else:
         if not _restore_excel_session(client_id):
             return []
     session = get_session(client_id)
+    if not session:
+        return []
+    return session.get("message_history", [])
+
+
+def _get_or_restore_gemini_session_messages(client_id: str) -> list:
+    session_key = _gemini_session_key(client_id)
+    session = get_session(session_key)
+    if session and session["message_history"]:
+        return session["message_history"]
+    if not _restore_gemini_session(client_id):
+        return []
+    session = get_session(session_key)
     if not session:
         return []
     return session.get("message_history", [])
@@ -278,6 +456,27 @@ async def delete_session_messages(client_id: str):
         return JSONResponse(status_code=404, content={"error": "Session not found"})
     delete_session(client_id)
     _reset_session_history(client_id, session["type"])
+    return {"status": "cleared", "client_id": client_id}
+
+
+@app.get("/sessions/gemini/{client_id}")
+async def get_gemini_session_messages(client_id: str):
+    messages = _get_or_restore_gemini_session_messages(client_id)
+    if not messages:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+    return {"messages": messages}
+
+
+@app.delete("/sessions/gemini/{client_id}")
+async def delete_gemini_session_messages(client_id: str):
+    session_key = _gemini_session_key(client_id)
+    session = get_session(session_key)
+    if not session:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+    delete_session(session_key)
+    if client_id in active_gemini_connections:
+        del active_gemini_connections[client_id]
+    manager.disconnect(session_key)
     return {"status": "cleared", "client_id": client_id}
 
 @app.post("/upload")
@@ -397,6 +596,68 @@ async def upload_pdf(file: UploadFile = File(...)):
         }
     except Exception as e:
         error_msg = f"Error in upload_pdf: {str(e)}"
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"error": error_msg})
+
+
+@app.post("/upload/doc")
+async def upload_doc(file: UploadFile = File(...)):
+    """Upload a DOCX file and return a client ID for WebSocket connection"""
+    print(f"Received DOCX upload: {file.filename}")
+
+    try:
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        if file_extension != ".docx":
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Unsupported file format. Only .docx files are supported."}
+            )
+
+        client_id = str(uuid.uuid4())
+        print(f"Generated DOC client ID: {client_id}")
+
+        file_path = os.path.join(UPLOAD_DIR, f"{client_id}{file_extension}")
+        print(f"Saving DOCX to: {file_path}")
+
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            print(f"Read {len(content)} bytes from DOCX")
+            if not content:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Uploaded DOCX is empty."}
+                )
+            buffer.write(content)
+
+        doc_text = extract_docx_text(file_path)
+        if not doc_text.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Failed to extract text from the DOCX."}
+            )
+
+        system_message = _build_doc_system_message(file.filename, doc_text)
+
+        active_doc_connections[client_id] = {
+            "file_path": file_path,
+            "filename": file.filename,
+            "doc_text": doc_text,
+            "message_history": [
+                {"role": "system", "content": system_message}
+            ]
+        }
+
+        save_upload(client_id, "doc", file_path, file.filename)
+        save_session(client_id, "doc", active_doc_connections[client_id]["message_history"])
+
+        print("DOCX upload successful")
+        return {
+            "client_id": client_id,
+            "filename": file.filename,
+            "text": doc_text
+        }
+    except Exception as e:
+        error_msg = f"Error in upload_doc: {str(e)}"
         print(error_msg)
         return JSONResponse(status_code=500, content={"error": error_msg})
 
@@ -583,6 +844,135 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     except WebSocketDisconnect:
         manager.disconnect(client_id)
 
+
+@app.websocket("/ws/gemini/{client_id}")
+async def gemini_websocket_endpoint(websocket: WebSocket, client_id: str):
+    """WebSocket endpoint for real-time communication with the Gemini agent"""
+    if client_id not in active_gemini_connections:
+        if not _restore_gemini_session(client_id):
+            await websocket.close(code=1000, reason="Client not found")
+            return
+
+    session_key = _gemini_session_key(client_id)
+    await manager.connect(websocket, session_key)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message_data = json.loads(data)
+            if message_data.get("type") == "cancel":
+                _mark_canceled(session_key, message_data.get("request_id"))
+                await manager.send_message(
+                    session_key,
+                    json.dumps({
+                        "type": "canceled",
+                        "request_id": message_data.get("request_id")
+                    })
+                )
+                continue
+
+            user_message = message_data.get("message", "")
+            request_id = message_data.get("request_id")
+            model_id = message_data.get("model_id")
+            model_params = message_data.get("model_params") or {}
+            raw_attachments = message_data.get("image_attachments") or []
+            image_attachments = []
+            for attachment in raw_attachments:
+                if not isinstance(attachment, dict):
+                    continue
+                mime_type = attachment.get("mime_type")
+                data = attachment.get("data")
+                if not mime_type or not data:
+                    continue
+                try:
+                    image_bytes = base64.b64decode(data)
+                except (ValueError, TypeError) as error:
+                    print(f"Failed to decode image attachment: {error}")
+                    continue
+                image_attachments.append({
+                    "mime_type": mime_type,
+                    "data": image_bytes
+                })
+            if _is_canceled(session_key, request_id):
+                continue
+
+            active_gemini_connections[client_id]["message_history"].append(
+                {"role": "user", "content": user_message}
+            )
+            _persist_gemini_message_history(client_id, active_gemini_connections[client_id]["message_history"])
+
+            message_history = active_gemini_connections[client_id]["message_history"]
+            tool_runner = None
+            if active_gemini_connections[client_id].get("type") == "spreadsheet":
+                excel_utils = active_gemini_connections[client_id].get("excel_utils")
+                if excel_utils:
+                    def tool_runner(tool_name, tool_args):
+                        try:
+                            if tool_name == "read_excel_range":
+                                return excel_utils.read_excel_range(tool_args.get("range", ""))
+                            if tool_name == "read_cell":
+                                return excel_utils.read_cell(
+                                    cell=tool_args.get("cell"),
+                                    row=tool_args.get("row"),
+                                    col=tool_args.get("col")
+                                )
+                            if tool_name == "read_sheet_metadata":
+                                return excel_utils.read_sheet_metadata()
+                            if tool_name == "get_column_values":
+                                return excel_utils.get_column_values(int(tool_args.get("index", 0)))
+                            if tool_name == "filter_rows":
+                                return excel_utils.filter_rows(
+                                    int(tool_args.get("col_index", 0)),
+                                    str(tool_args.get("value", ""))
+                                )
+                            if tool_name == "get_last_filled_row_index":
+                                return str(excel_utils.get_last_filled_row_index())
+                            return f"Unknown tool: {tool_name}"
+                        except Exception as error:
+                            return f"Tool error ({tool_name}): {error}"
+
+            try:
+                response = gemini_agent.call_agent(
+                    message_history,
+                    model_id,
+                    model_params,
+                    image_attachments,
+                    tool_runner=tool_runner
+                )
+
+                if _is_canceled(session_key, request_id):
+                    canceled_requests.get(session_key, set()).discard(request_id)
+                    continue
+
+                active_gemini_connections[client_id]["message_history"].append(
+                    {"role": "assistant", "content": response}
+                )
+                _persist_gemini_message_history(client_id, active_gemini_connections[client_id]["message_history"])
+
+                await manager.send_message(
+                    session_key,
+                    json.dumps({
+                        "response": response,
+                        "request_id": request_id
+                    })
+                )
+            except Exception as e:
+                print(f"Error in Gemini agent processing: {str(e)}")
+                if not _is_canceled(session_key, request_id):
+                    await manager.send_message(
+                        session_key,
+                        json.dumps({
+                            "response": f"Error processing request: {str(e)}",
+                            "request_id": request_id
+                        })
+                    )
+
+    except WebSocketDisconnect:
+        manager.disconnect(session_key)
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        manager.disconnect(session_key)
+
 @app.get("/pdf/{client_id}/file")
 async def get_pdf_file(client_id: str):
     upload = get_upload(client_id)
@@ -592,6 +982,14 @@ async def get_pdf_file(client_id: str):
     if not os.path.exists(file_path):
         return JSONResponse(status_code=404, content={"error": "PDF file not found"})
     return FileResponse(file_path, media_type="application/pdf")
+
+
+@app.get("/doc/{client_id}/text")
+async def get_doc_text(client_id: str):
+    if client_id not in active_doc_connections:
+        if not _restore_doc_session(client_id):
+            return JSONResponse(status_code=404, content={"error": "DOC client not found"})
+    return {"text": active_doc_connections[client_id]["doc_text"]}
 
 
 @app.delete("/uploads/{client_id}")
@@ -605,7 +1003,12 @@ async def delete_upload_endpoint(client_id: str):
         del active_connections[client_id]
     if client_id in active_pdf_connections:
         del active_pdf_connections[client_id]
+    if client_id in active_doc_connections:
+        del active_doc_connections[client_id]
     manager.disconnect(client_id)
+    if client_id in active_gemini_connections:
+        del active_gemini_connections[client_id]
+    manager.disconnect(_gemini_session_key(client_id))
 
     if file_path and os.path.exists(file_path):
         try:
@@ -617,6 +1020,7 @@ async def delete_upload_endpoint(client_id: str):
             )
 
     delete_upload(client_id)
+    delete_session(_gemini_session_key(client_id))
     return {"status": "deleted", "client_id": client_id}
 
 @app.websocket("/ws/pdf/{client_id}")
@@ -686,6 +1090,92 @@ async def pdf_websocket_endpoint(websocket: WebSocket, client_id: str):
                 )
             except Exception as e:
                 print(f"Error in PDF agent processing: {str(e)}")
+                if not _is_canceled(client_id, request_id):
+                    await manager.send_message(
+                        client_id,
+                        json.dumps({
+                            "response": f"Error processing request: {str(e)}",
+                            "request_id": request_id
+                        })
+                    )
+
+    except WebSocketDisconnect:
+        manager.disconnect(client_id)
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        manager.disconnect(client_id)
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        manager.disconnect(client_id)
+
+
+@app.websocket("/ws/doc/{client_id}")
+async def doc_websocket_endpoint(websocket: WebSocket, client_id: str):
+    """WebSocket endpoint for real-time communication with the DOCX agent"""
+    if client_id not in active_doc_connections:
+        if not _restore_doc_session(client_id):
+            await websocket.close(code=1000, reason="Client not found")
+            return
+
+    await manager.connect(websocket, client_id)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message_data = json.loads(data)
+            if message_data.get("type") == "cancel":
+                _mark_canceled(client_id, message_data.get("request_id"))
+                await manager.send_message(
+                    client_id,
+                    json.dumps({
+                        "type": "canceled",
+                        "request_id": message_data.get("request_id")
+                    })
+                )
+                continue
+            user_message = message_data.get("message", "")
+            request_id = message_data.get("request_id")
+            model_provider = message_data.get("model_provider", "openai")
+            model_id = message_data.get("model_id")
+            model_params = message_data.get("model_params") or {}
+            if model_provider not in {"openai"}:
+                model_provider = "openai"
+            if _is_canceled(client_id, request_id):
+                continue
+
+            active_doc_connections[client_id]["message_history"].append(
+                {"role": "user", "content": user_message}
+            )
+            _persist_message_history(client_id, "doc", active_doc_connections[client_id]["message_history"])
+
+            message_history = active_doc_connections[client_id]["message_history"]
+
+            try:
+                response = doc_agent.call_agent(
+                    message_history,
+                    model_provider,
+                    model_id,
+                    model_params
+                )
+
+                if _is_canceled(client_id, request_id):
+                    canceled_requests.get(client_id, set()).discard(request_id)
+                    continue
+
+                active_doc_connections[client_id]["message_history"].append(
+                    {"role": "assistant", "content": response}
+                )
+                _persist_message_history(client_id, "doc", active_doc_connections[client_id]["message_history"])
+
+                await manager.send_message(
+                    client_id,
+                    json.dumps({
+                        "response": response,
+                        "request_id": request_id
+                    })
+                )
+            except Exception as e:
+                print(f"Error in DOCX agent processing: {str(e)}")
                 if not _is_canceled(client_id, request_id):
                     await manager.send_message(
                         client_id,
