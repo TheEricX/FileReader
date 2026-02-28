@@ -12,6 +12,34 @@ import './App.css';
 function App() {
   const GEMINI_MAX_IMAGE_COUNT = 4;
   const GEMINI_MAX_IMAGE_SIZE_MB = 5;
+  const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  const configuredWsBase = (import.meta.env.VITE_WS_BASE_URL || '').trim().replace(/\/+$/, '');
+  const defaultWsBase = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
+  const wsBaseFromApi = (() => {
+    if (!configuredApiBase) {
+      return defaultWsBase;
+    }
+    try {
+      const apiUrlValue = new URL(configuredApiBase, window.location.origin);
+      apiUrlValue.protocol = apiUrlValue.protocol === 'https:' ? 'wss:' : 'ws:';
+      apiUrlValue.pathname = '';
+      apiUrlValue.search = '';
+      apiUrlValue.hash = '';
+      return apiUrlValue.toString().replace(/\/+$/, '');
+    } catch (error) {
+      console.warn('Invalid VITE_API_BASE_URL, fallback to current host WebSocket base.', error);
+      return defaultWsBase;
+    }
+  })();
+  const apiBase = configuredApiBase || '/api';
+  const wsBase = configuredWsBase || wsBaseFromApi;
+  const apiUrl = (path) => `${apiBase}${path}`;
+  const wsUrl = (path) => `${wsBase}${path}`;
+  const resolveFileUrl = (path) => {
+    if (!path) return null;
+    if (/^https?:\/\//i.test(path)) return path;
+    return apiUrl(path);
+  };
   const modelOptions = [
     {
       id: 'openai:gpt-4o',
@@ -63,7 +91,7 @@ function App() {
     }
     return modelOptions[1].id;
   });
-  const [activeWorkspace, setActiveWorkspace] = useState('default');
+  const [activeWorkspace, setActiveWorkspace] = useState(null);
   const [geminiClientId, setGeminiClientId] = useState(null);
   const [geminiSessionMode, setGeminiSessionMode] = useState(null);
   const [geminiSocket, setGeminiSocket] = useState(null);
@@ -89,6 +117,7 @@ function App() {
   const [pdfFilename, setPdfFilename] = useState('');
   const [docText, setDocText] = useState('');
   const [uploadHistory, setUploadHistory] = useState([]);
+  const [showHubUploadManager, setShowHubUploadManager] = useState(false);
   const [showUploadManager, setShowUploadManager] = useState(false);
   const [uploadSearch, setUploadSearch] = useState('');
   const [uploadFilterType, setUploadFilterType] = useState('all');
@@ -138,12 +167,12 @@ function App() {
     if (!clientId || !sessionMode) return;
 
     // For WebSocket connections, we still need to use the full URL
-    const wsUrl = sessionMode === 'pdf'
-      ? `ws://localhost:8000/ws/pdf/${clientId}`
+    const socketUrl = sessionMode === 'pdf'
+      ? wsUrl(`/ws/pdf/${clientId}`)
       : sessionMode === 'doc'
-        ? `ws://localhost:8000/ws/doc/${clientId}`
-        : `ws://localhost:8000/ws/${clientId}`;
-    const ws = new WebSocket(wsUrl);
+        ? wsUrl(`/ws/doc/${clientId}`)
+        : wsUrl(`/ws/${clientId}`);
+    const ws = new WebSocket(socketUrl);
     
     ws.onopen = () => {
       console.log('WebSocket connected');
@@ -226,8 +255,7 @@ function App() {
   useEffect(() => {
     if (!geminiClientId || !geminiSessionMode) return;
 
-    const wsUrl = `ws://localhost:8000/ws/gemini/${geminiClientId}`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl(`/ws/gemini/${geminiClientId}`));
 
     ws.onopen = () => {
       console.log('Gemini WebSocket connected');
@@ -288,27 +316,29 @@ function App() {
     };
   }, [geminiClientId, geminiSessionMode]);
 
-  useEffect(() => {
-    const loadUploads = async () => {
-      try {
-        const response = await fetch('http://localhost:8000/uploads');
-        if (!response.ok) {
-          throw new Error('Failed to load upload history');
-        }
-        const data = await response.json();
-        const uploads = Array.isArray(data.uploads) ? data.uploads : [];
-        setUploadHistory(uploads.map((entry) => ({
-          clientId: entry.client_id,
-          filename: entry.filename || 'Untitled',
-          type: entry.type,
-          fileUrl: entry.file_url ? `http://localhost:8000${entry.file_url}` : null,
-          uploadedAt: entry.uploaded_at
-        })));
-      } catch (error) {
-        console.warn('Failed to load upload history', error);
+  const loadUploads = async (workspace = 'all') => {
+    try {
+      const response = await fetch(apiUrl(`/uploads?workspace=${workspace}`));
+      if (!response.ok) {
+        throw new Error('Failed to load upload history');
       }
-    };
-    loadUploads();
+      const data = await response.json();
+      const uploads = Array.isArray(data.uploads) ? data.uploads : [];
+      setUploadHistory(uploads.map((entry) => ({
+        clientId: entry.client_id,
+        filename: entry.filename || 'Untitled',
+        type: entry.type,
+        fileUrl: resolveFileUrl(entry.file_url),
+        uploadedAt: entry.uploaded_at,
+        workspace: entry.workspace || 'default'
+      })));
+    } catch (error) {
+      console.warn('Failed to load upload history', error);
+    }
+  };
+
+  useEffect(() => {
+    loadUploads('all');
   }, []);
 
   useEffect(() => {
@@ -362,16 +392,9 @@ function App() {
     });
   }, [selectedModelId, defaultModelParams]);
 
-  const addUploadHistory = (entry) => {
-    setUploadHistory((prev) => {
-      const next = [entry, ...prev.filter((item) => item.clientId !== entry.clientId)];
-      return next.slice(0, 20);
-    });
-  };
-
   const fetchSessionMessages = async (clientIdToLoad) => {
     try {
-      const response = await fetch(`http://localhost:8000/sessions/${clientIdToLoad}`);
+      const response = await fetch(apiUrl(`/sessions/${clientIdToLoad}`));
       if (!response.ok) {
         return [];
       }
@@ -386,7 +409,7 @@ function App() {
 
   const fetchGeminiSessionMessages = async (clientIdToLoad) => {
     try {
-      const response = await fetch(`http://localhost:8000/sessions/gemini/${clientIdToLoad}`);
+      const response = await fetch(apiUrl(`/sessions/gemini/${clientIdToLoad}`));
       if (!response.ok) {
         return [];
       }
@@ -401,7 +424,7 @@ function App() {
 
   const removeUploadHistory = async (clientIdToRemove) => {
     try {
-      const response = await fetch(`http://localhost:8000/uploads/${clientIdToRemove}`, {
+      const response = await fetch(apiUrl(`/uploads/${clientIdToRemove}`), {
         method: 'DELETE'
       });
       if (!response.ok && response.status !== 404) {
@@ -420,6 +443,9 @@ function App() {
         throw new Error(errorMessage);
       }
       setUploadHistory((prev) => prev.filter((item) => item.clientId !== clientIdToRemove));
+      if (!activeWorkspace) {
+        await loadUploads('all');
+      }
     } catch (error) {
       console.error('Error deleting upload:', error);
       setError(error?.message || 'Failed to delete upload. Please try again.');
@@ -448,7 +474,7 @@ function App() {
     }
     if (entry.type === 'doc') {
       try {
-        const response = await fetch(`http://localhost:8000/doc/${entry.clientId}/text`);
+        const response = await fetch(apiUrl(`/doc/${entry.clientId}/text`));
         if (response.ok) {
           const data = await response.json();
           setDocText(data.text || '');
@@ -479,7 +505,7 @@ function App() {
     }
     if (entry.type === 'doc') {
       try {
-        const response = await fetch(`http://localhost:8000/doc/${entry.clientId}/text`);
+        const response = await fetch(apiUrl(`/doc/${entry.clientId}/text`));
         if (response.ok) {
           const data = await response.json();
           setGeminiDocText(data.text || '');
@@ -497,7 +523,7 @@ function App() {
       }
       if (!uploadSearch.trim()) return true;
       const keyword = uploadSearch.trim().toLowerCase();
-      return `${entry.filename} ${entry.type}`.toLowerCase().includes(keyword);
+      return `${entry.filename} ${entry.type} ${entry.workspace || ''}`.toLowerCase().includes(keyword);
     })
     .sort((a, b) => {
       if (uploadSort === 'name') {
@@ -508,10 +534,11 @@ function App() {
       }
       return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
     });
+  const recentUploads = uploadHistory.slice(0, 2);
 
   const fetchExcelData = async () => {
     try {
-      const response = await fetch(`http://localhost:8000/excel/${clientId}`);
+      const response = await fetch(apiUrl(`/excel/${clientId}`));
       if (!response.ok) {
         throw new Error('Failed to fetch Excel data');
       }
@@ -525,7 +552,7 @@ function App() {
 
   const fetchGeminiExcelData = async (clientIdToLoad) => {
     try {
-      const response = await fetch(`http://localhost:8000/excel/${clientIdToLoad}`);
+      const response = await fetch(apiUrl(`/excel/${clientIdToLoad}`));
       if (!response.ok) {
         throw new Error('Failed to fetch Excel data');
       }
@@ -598,9 +625,10 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('workspace', 'default');
       
       console.log('Sending file to backend...');
-      const response = await fetch('http://localhost:8000/upload', {
+      const response = await fetch(apiUrl('/upload'), {
         method: 'POST',
         body: formData,
       });
@@ -629,12 +657,7 @@ function App() {
       setClientId(data.client_id);
       setSessionMode('spreadsheet');
       setSelectionSummary(null);
-      addUploadHistory({
-        clientId: data.client_id,
-        filename: file.name,
-        type: 'spreadsheet',
-        uploadedAt: new Date().toISOString()
-      });
+      await loadUploads('default');
     } catch (error) {
       console.error('Error uploading file:', error);
       setError(error?.message || 'Failed to upload file. Please try again.');
@@ -651,8 +674,9 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('workspace', 'default');
 
-      const response = await fetch('http://localhost:8000/upload/pdf', {
+      const response = await fetch(apiUrl('/upload/pdf'), {
         method: 'POST',
         body: formData,
       });
@@ -681,15 +705,9 @@ function App() {
       setSelectionSummary(null);
       setPdfFilename(data.filename || file.name);
       if (data.file_url) {
-        setPdfUrl(`http://localhost:8000${data.file_url}`);
+        setPdfUrl(resolveFileUrl(data.file_url));
       }
-      addUploadHistory({
-        clientId: data.client_id,
-        filename: data.filename || file.name,
-        type: 'pdf',
-        fileUrl: data.file_url ? `http://localhost:8000${data.file_url}` : null,
-        uploadedAt: new Date().toISOString()
-      });
+      await loadUploads('default');
     } catch (error) {
       console.error('Error uploading PDF:', error);
       setError(error?.message || 'Failed to upload PDF. Please try again.');
@@ -706,8 +724,9 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('workspace', 'default');
 
-      const response = await fetch('http://localhost:8000/upload/doc', {
+      const response = await fetch(apiUrl('/upload/doc'), {
         method: 'POST',
         body: formData,
       });
@@ -734,13 +753,9 @@ function App() {
       setClientId(data.client_id);
       setSessionMode('doc');
       setSelectionSummary(null);
+      setPdfFilename(data.filename || file.name);
       setDocText(data.text || '');
-      addUploadHistory({
-        clientId: data.client_id,
-        filename: data.filename || file.name,
-        type: 'doc',
-        uploadedAt: new Date().toISOString()
-      });
+      await loadUploads('default');
     } catch (error) {
       console.error('Error uploading DOCX:', error);
       setError(error?.message || 'Failed to upload DOCX. Please try again.');
@@ -757,8 +772,9 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('workspace', 'gemini');
 
-      const response = await fetch('http://localhost:8000/upload', {
+      const response = await fetch(apiUrl('/upload'), {
         method: 'POST',
         body: formData,
       });
@@ -783,12 +799,7 @@ function App() {
       setGeminiClientId(data.client_id);
       setGeminiSessionMode('spreadsheet');
       setGeminiExcelData(null);
-      addUploadHistory({
-        clientId: data.client_id,
-        filename: file.name,
-        type: 'spreadsheet',
-        uploadedAt: new Date().toISOString()
-      });
+      await loadUploads('gemini');
     } catch (error) {
       console.error('Error uploading Gemini file:', error);
       setError(error?.message || 'Failed to upload file. Please try again.');
@@ -805,8 +816,9 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('workspace', 'gemini');
 
-      const response = await fetch('http://localhost:8000/upload/pdf', {
+      const response = await fetch(apiUrl('/upload/pdf'), {
         method: 'POST',
         body: formData,
       });
@@ -831,14 +843,8 @@ function App() {
       setGeminiClientId(data.client_id);
       setGeminiSessionMode('pdf');
       setGeminiFilename(data.filename || file.name);
-      setGeminiPdfUrl(data.file_url ? `http://localhost:8000${data.file_url}` : null);
-      addUploadHistory({
-        clientId: data.client_id,
-        filename: data.filename || file.name,
-        type: 'pdf',
-        fileUrl: data.file_url ? `http://localhost:8000${data.file_url}` : null,
-        uploadedAt: new Date().toISOString()
-      });
+      setGeminiPdfUrl(resolveFileUrl(data.file_url));
+      await loadUploads('gemini');
     } catch (error) {
       console.error('Error uploading Gemini PDF:', error);
       setError(error?.message || 'Failed to upload PDF. Please try again.');
@@ -855,8 +861,9 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('workspace', 'gemini');
 
-      const response = await fetch('http://localhost:8000/upload/doc', {
+      const response = await fetch(apiUrl('/upload/doc'), {
         method: 'POST',
         body: formData,
       });
@@ -882,12 +889,7 @@ function App() {
       setGeminiSessionMode('doc');
       setGeminiDocText(data.text || '');
       setGeminiFilename(data.filename || file.name);
-      addUploadHistory({
-        clientId: data.client_id,
-        filename: data.filename || file.name,
-        type: 'doc',
-        uploadedAt: new Date().toISOString()
-      });
+      await loadUploads('gemini');
     } catch (error) {
       console.error('Error uploading Gemini DOCX:', error);
       setError(error?.message || 'Failed to upload DOCX. Please try again.');
@@ -1061,6 +1063,38 @@ function App() {
     setIsResizing(true);
   };
 
+  const handleEnterWorkspace = async (workspace) => {
+    setActiveWorkspace(workspace);
+    setShowUploadManager(false);
+    setShowHubUploadManager(false);
+    setShowSettings(false);
+    setError(null);
+    await loadUploads(workspace);
+  };
+
+  const handleBackToHome = async () => {
+    setActiveWorkspace(null);
+    setShowUploadManager(false);
+    setShowSettings(false);
+    setShowHubUploadManager(false);
+    setError(null);
+    await loadUploads('all');
+  };
+
+  const openUploadFromHub = async (entry) => {
+    if (entry.workspace === 'gemini') {
+      setActiveWorkspace('gemini');
+      setShowHubUploadManager(false);
+      await loadUploads('gemini');
+      await openGeminiUploadSession(entry);
+      return;
+    }
+    setActiveWorkspace('default');
+    setShowHubUploadManager(false);
+    await loadUploads('default');
+    await openUploadSession(entry);
+  };
+
   const formatUploadTime = (isoString) => {
     if (!isoString) return '';
     const date = new Date(isoString);
@@ -1110,27 +1144,200 @@ function App() {
 
   return (
     <div className={`app-container ${isResizing ? 'is-resizing' : ''}`}>
-      <header className="app-nav">
-        <div className="app-nav-left">
-          <button
-            type="button"
-            className={`app-nav-button ${activeWorkspace === 'default' ? 'active' : ''}`}
-            onClick={() => setActiveWorkspace('default')}
-          >
-            ExcelFlow
-          </button>
-        </div>
-        <div className="app-nav-right">
-          <button
-            type="button"
-            className={`app-nav-button ${activeWorkspace === 'gemini' ? 'active' : ''}`}
-            onClick={() => setActiveWorkspace('gemini')}
-          >
-            Gemini
-          </button>
-        </div>
-      </header>
-      {activeWorkspace === 'gemini' ? (
+      {!activeWorkspace ? (
+        showHubUploadManager ? (
+          <section className="hub-uploads-page" aria-label="All uploads">
+            <div className="hub-uploads-header">
+              <div className="hub-uploads-topbar">
+                <button
+                  type="button"
+                  className="workspace-hub-button"
+                  onClick={() => setShowHubUploadManager(false)}
+                >
+                  Back to Workspace Selection
+                </button>
+                <span className="hub-uploads-count">{uploadHistory.length} files</span>
+              </div>
+              <div className="hub-uploads-title">
+                <h1>All Uploads</h1>
+                <p>View and reopen uploads across all workspaces.</p>
+              </div>
+            </div>
+            <div className="hub-uploads-panel">
+              <div className="upload-manager-search">
+                <input
+                  type="text"
+                  placeholder="Search by filename or type"
+                  value={uploadSearch}
+                  onChange={(event) => setUploadSearch(event.target.value)}
+                />
+              </div>
+              <div className="upload-manager-controls">
+                <div className="upload-filter">
+                  <button
+                    type="button"
+                    className={uploadFilterType === 'all' ? 'active' : ''}
+                    onClick={() => setUploadFilterType('all')}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    className={uploadFilterType === 'spreadsheet' ? 'active' : ''}
+                    onClick={() => setUploadFilterType('spreadsheet')}
+                  >
+                    Spreadsheets
+                  </button>
+                  <button
+                    type="button"
+                    className={uploadFilterType === 'pdf' ? 'active' : ''}
+                    onClick={() => setUploadFilterType('pdf')}
+                  >
+                    PDFs
+                  </button>
+                  <button
+                    type="button"
+                    className={uploadFilterType === 'doc' ? 'active' : ''}
+                    onClick={() => setUploadFilterType('doc')}
+                  >
+                    DOCX
+                  </button>
+                </div>
+                <div className="upload-sort">
+                  <label htmlFor="upload-sort-home">Sort</label>
+                  <select
+                    id="upload-sort-home"
+                    value={uploadSort}
+                    onChange={(event) => setUploadSort(event.target.value)}
+                  >
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="name">A–Z</option>
+                  </select>
+                </div>
+              </div>
+              <div className="upload-manager-meta">
+                {uploadHistory.length} uploads total. Showing {filteredUploads.length}.
+              </div>
+              {filteredUploads.length === 0 ? (
+                <div className="upload-manager-empty">No uploads match your search.</div>
+              ) : (
+                <div className="upload-manager-list">
+                  {filteredUploads.map((entry) => (
+                    <div className="upload-manager-item hub-upload-item" key={entry.clientId}>
+                      <div className="hub-upload-main">
+                        <strong className="hub-upload-name">{entry.filename}</strong>
+                        <div className="hub-upload-meta">
+                          <span className={`upload-type ${entry.type}`}>{entry.type}</span>
+                          <span className={`upload-type workspace ${entry.workspace}`}>{entry.workspace}</span>
+                          <span className="upload-time">{formatUploadTime(entry.uploadedAt)}</span>
+                        </div>
+                      </div>
+                      <div className="upload-actions hub-upload-actions">
+                        <button type="button" className="upload-open" onClick={() => openUploadFromHub(entry)}>
+                          Open
+                        </button>
+                        <button type="button" className="upload-remove" onClick={() => removeUploadHistory(entry.clientId)}>
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        ) : (
+          <section className="workspace-hub" aria-label="Workspace selection">
+            <div className="workspace-hub-header">
+              <h1>Choose Your Workspace</h1>
+              <p>Select an environment first, then upload files and start analysis inside it.</p>
+            </div>
+            <div className="workspace-grid">
+              <button
+                type="button"
+                className="workspace-card"
+                onClick={() => handleEnterWorkspace('default')}
+              >
+                <span className="workspace-card-kicker">Standard</span>
+                <h2>ExcelFlow</h2>
+                <p>OpenAI and Bedrock workspace for spreadsheet editing, PDF and DOC analysis.</p>
+              </button>
+              <button
+                type="button"
+                className="workspace-card"
+                onClick={() => handleEnterWorkspace('gemini')}
+              >
+                <span className="workspace-card-kicker">Multimodal</span>
+                <h2>Gemini</h2>
+                <p>Gemini workspace with image input support and focused spreadsheet/document analysis.</p>
+              </button>
+            </div>
+            <div className="workspace-preview">
+              <div className="workspace-preview-header">
+                <h3>Recent Uploads</h3>
+                <span>{uploadHistory.length} total</span>
+              </div>
+              {recentUploads.length === 0 ? (
+                <div className="workspace-preview-empty">No uploads yet.</div>
+              ) : (
+                <div className="workspace-preview-list">
+                  {recentUploads.map((entry) => (
+                    <div className="workspace-preview-item" key={entry.clientId}>
+                      <div className="workspace-preview-main">
+                        <div className="workspace-preview-tags">
+                          <span className={`upload-type ${entry.type}`}>{entry.type}</span>
+                          <span className={`upload-type workspace ${entry.workspace}`}>{entry.workspace}</span>
+                        </div>
+                        <strong>{entry.filename}</strong>
+                        <span className="upload-time">{formatUploadTime(entry.uploadedAt)}</span>
+                      </div>
+                      <button type="button" onClick={() => openUploadFromHub(entry)}>
+                        Open
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="workspace-hub-actions">
+              <button
+                type="button"
+                className="workspace-hub-button"
+                onClick={async () => {
+                  await loadUploads('all');
+                  setShowHubUploadManager(true);
+                }}
+              >
+                Browse All Uploads
+              </button>
+            </div>
+          </section>
+        )
+      ) : (
+        <>
+          <header className="app-nav">
+            <div className="app-nav-left">
+              <button
+                type="button"
+                className="app-nav-button"
+                onClick={handleBackToHome}
+              >
+                Back to Home
+              </button>
+            </div>
+            <div className="app-nav-center">
+              <span className="app-nav-title">
+                {activeWorkspace === 'gemini' ? 'Gemini' : 'ExcelFlow'}
+              </span>
+            </div>
+            <div className="app-nav-right">
+              <span className="app-nav-status">
+                Current Workspace: <strong>{activeWorkspace === 'gemini' ? 'Gemini' : 'ExcelFlow'}</strong>
+              </span>
+            </div>
+          </header>
+          {activeWorkspace === 'gemini' ? (
         !geminiClientId ? (
           <div className="upload-shell">
             <aside className="side-nav" aria-label="Gemini upload modes">
@@ -1156,7 +1363,10 @@ function App() {
                     <button
                       type="button"
                       className={showUploadManager ? 'active' : ''}
-                      onClick={() => setShowUploadManager(true)}
+                      onClick={async () => {
+                        await loadUploads('gemini');
+                        setShowUploadManager(true);
+                      }}
                     >
                       Manage
                     </button>
@@ -1170,8 +1380,8 @@ function App() {
                 <div className="upload-manager">
                   <div className="upload-manager-header">
                     <div>
-                      <h2>All Uploads</h2>
-                      <p>Search and reopen any uploaded file.</p>
+                      <h2>Workspace Uploads</h2>
+                      <p>Search and reopen uploads from Gemini only.</p>
                     </div>
                     <button type="button" onClick={() => setShowUploadManager(false)}>
                       Close
@@ -1230,7 +1440,7 @@ function App() {
                     </div>
                   </div>
                   <div className="upload-manager-meta">
-                    {uploadHistory.length} uploads total. Showing {filteredUploads.length}.
+                    {uploadHistory.length} uploads in this workspace. Showing {filteredUploads.length}.
                   </div>
                   {filteredUploads.length === 0 ? (
                     <div className="upload-manager-empty">No uploads match your search.</div>
@@ -1342,7 +1552,7 @@ function App() {
                     return;
                   }
                   try {
-                    const response = await fetch(`http://localhost:8000/sessions/gemini/${geminiClientId}`, {
+                    const response = await fetch(apiUrl(`/sessions/gemini/${geminiClientId}`), {
                       method: 'DELETE'
                     });
                     if (!response.ok && response.status !== 404) {
@@ -1442,6 +1652,7 @@ function App() {
                       type="button"
                       className={showUploadManager ? 'active' : ''}
                       onClick={() => {
+                        loadUploads('default');
                         setShowUploadManager(true);
                         setShowSettings(false);
                       }}
@@ -1584,8 +1795,8 @@ function App() {
                 <div className="upload-manager">
                 <div className="upload-manager-header">
                   <div>
-                    <h2>All Uploads</h2>
-                    <p>Search and reopen any uploaded file.</p>
+                    <h2>Workspace Uploads</h2>
+                    <p>Search and reopen uploads from ExcelFlow only.</p>
                   </div>
                   <button type="button" onClick={() => setShowUploadManager(false)}>
                     Close
@@ -1644,7 +1855,7 @@ function App() {
                   </div>
                 </div>
                 <div className="upload-manager-meta">
-                  {uploadHistory.length} uploads total. Showing {filteredUploads.length}.
+                  {uploadHistory.length} uploads in this workspace. Showing {filteredUploads.length}.
                 </div>
                 {filteredUploads.length === 0 ? (
                   <div className="upload-manager-empty">No uploads match your search.</div>
@@ -1757,7 +1968,7 @@ function App() {
                     return;
                   }
                   try {
-                    const response = await fetch(`http://localhost:8000/sessions/${clientId}`, {
+                    const response = await fetch(apiUrl(`/sessions/${clientId}`), {
                       method: 'DELETE'
                     });
                     if (!response.ok && response.status !== 404) {
@@ -1791,6 +2002,8 @@ function App() {
             </div>
           </div>
         )
+      )}
+        </>
       )}
     </div>
   );

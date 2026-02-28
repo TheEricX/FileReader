@@ -5,7 +5,7 @@ import base64
 from datetime import datetime
 import pandas as pd
 from typing import Dict, Set
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
@@ -53,6 +53,7 @@ active_pdf_connections: Dict[str, Dict] = {}
 active_doc_connections: Dict[str, Dict] = {}
 active_gemini_connections: Dict[str, Dict] = {}
 canceled_requests: Dict[str, Set[str]] = {}
+ALLOWED_WORKSPACES = {"default", "gemini"}
 
 # Initialize the Excel agent
 excel_agent = ExcelAgent()
@@ -93,6 +94,11 @@ def _mark_canceled(client_id: str, request_id: str) -> None:
 
 def _is_canceled(client_id: str, request_id: str) -> bool:
     return bool(request_id) and request_id in canceled_requests.get(client_id, set())
+
+
+def _normalize_workspace(workspace: str) -> str:
+    workspace_value = (workspace or "").strip().lower()
+    return workspace_value if workspace_value in ALLOWED_WORKSPACES else "default"
 
 
 def _build_excel_system_message(file_path: str) -> str:
@@ -353,7 +359,7 @@ def _bootstrap_upload_records() -> None:
         else:
             upload_type = "spreadsheet"
         uploaded_at = datetime.utcfromtimestamp(os.path.getmtime(file_path)).isoformat()
-        save_upload(client_id, upload_type, file_path, filename, uploaded_at)
+        save_upload(client_id, upload_type, file_path, filename, uploaded_at, workspace="default")
 
 
 def _get_or_restore_session_messages(client_id: str) -> list:
@@ -427,8 +433,14 @@ async def root():
 
 
 @app.get("/uploads")
-async def get_uploads():
-    uploads = list_uploads()
+async def get_uploads(workspace: str = Query(default="all")):
+    workspace_value = (workspace or "all").strip().lower()
+    if workspace_value not in {"all", "default", "gemini"}:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid workspace. Use all, default, or gemini."}
+        )
+    uploads = list_uploads(workspace=None if workspace_value == "all" else workspace_value)
     result = []
     for upload in uploads:
         result.append({
@@ -436,7 +448,8 @@ async def get_uploads():
             "type": upload["type"],
             "filename": upload.get("filename"),
             "file_url": f"/pdf/{upload['client_id']}/file" if upload["type"] == "pdf" else None,
-            "uploaded_at": upload["uploaded_at"]
+            "uploaded_at": upload["uploaded_at"],
+            "workspace": upload.get("workspace", "default")
         })
     return {"uploads": result}
 
@@ -480,7 +493,10 @@ async def delete_gemini_session_messages(client_id: str):
     return {"status": "cleared", "client_id": client_id}
 
 @app.post("/upload")
-async def upload_excel(file: UploadFile = File(...)):
+async def upload_excel(
+    file: UploadFile = File(...),
+    workspace: str = Form(default="default")
+):
     """Upload a spreadsheet file and return a client ID for WebSocket connection"""
     print(f"Received file upload: {file.filename}")
     
@@ -531,7 +547,13 @@ async def upload_excel(file: UploadFile = File(...)):
                 {"role": "system", "content": system_message}
             ]
         }
-        save_upload(client_id, "spreadsheet", file_path, file.filename)
+        save_upload(
+            client_id,
+            "spreadsheet",
+            file_path,
+            file.filename,
+            workspace=_normalize_workspace(workspace)
+        )
         save_session(client_id, "spreadsheet", active_connections[client_id]["message_history"])
         
         print("File upload successful")
@@ -542,7 +564,10 @@ async def upload_excel(file: UploadFile = File(...)):
         return JSONResponse(status_code=500, content={"error": error_msg})
 
 @app.post("/upload/pdf")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
+    file: UploadFile = File(...),
+    workspace: str = Form(default="default")
+):
     """Upload a PDF file and return a client ID for WebSocket connection"""
     print(f"Received PDF upload: {file.filename}")
 
@@ -585,7 +610,13 @@ async def upload_pdf(file: UploadFile = File(...)):
                 {"role": "system", "content": system_message}
             ]
         }
-        save_upload(client_id, "pdf", file_path, file.filename)
+        save_upload(
+            client_id,
+            "pdf",
+            file_path,
+            file.filename,
+            workspace=_normalize_workspace(workspace)
+        )
         save_session(client_id, "pdf", active_pdf_connections[client_id]["message_history"])
 
         print("PDF upload successful")
@@ -601,7 +632,10 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 
 @app.post("/upload/doc")
-async def upload_doc(file: UploadFile = File(...)):
+async def upload_doc(
+    file: UploadFile = File(...),
+    workspace: str = Form(default="default")
+):
     """Upload a DOCX file and return a client ID for WebSocket connection"""
     print(f"Received DOCX upload: {file.filename}")
 
@@ -647,7 +681,13 @@ async def upload_doc(file: UploadFile = File(...)):
             ]
         }
 
-        save_upload(client_id, "doc", file_path, file.filename)
+        save_upload(
+            client_id,
+            "doc",
+            file_path,
+            file.filename,
+            workspace=_normalize_workspace(workspace)
+        )
         save_session(client_id, "doc", active_doc_connections[client_id]["message_history"])
 
         print("DOCX upload successful")

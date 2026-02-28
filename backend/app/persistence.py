@@ -20,7 +20,8 @@ def init_db() -> None:
                 type TEXT NOT NULL,
                 file_path TEXT NOT NULL,
                 filename TEXT,
-                uploaded_at TEXT NOT NULL
+                uploaded_at TEXT NOT NULL,
+                workspace TEXT NOT NULL DEFAULT 'default'
             )
             """
         )
@@ -34,6 +35,13 @@ def init_db() -> None:
             )
             """
         )
+        # Backward-compatible migration for older DBs created without workspace column.
+        columns = conn.execute("PRAGMA table_info(uploads)").fetchall()
+        column_names = {column[1] for column in columns}
+        if "workspace" not in column_names:
+            conn.execute(
+                "ALTER TABLE uploads ADD COLUMN workspace TEXT NOT NULL DEFAULT 'default'"
+            )
         conn.commit()
 
 
@@ -42,16 +50,17 @@ def save_upload(
     upload_type: str,
     file_path: str,
     filename: Optional[str],
-    uploaded_at: Optional[str] = None
+    uploaded_at: Optional[str] = None,
+    workspace: str = "default"
 ) -> None:
     timestamp = uploaded_at or datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             """
-            INSERT OR REPLACE INTO uploads (client_id, type, file_path, filename, uploaded_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO uploads (client_id, type, file_path, filename, uploaded_at, workspace)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (client_id, upload_type, file_path, filename, timestamp)
+            (client_id, upload_type, file_path, filename, timestamp, workspace)
         )
         conn.commit()
 
@@ -99,7 +108,7 @@ def update_session_message_history(
 def get_upload(client_id: str) -> Optional[Dict[str, Any]]:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
-            "SELECT client_id, type, file_path, filename, uploaded_at FROM uploads WHERE client_id = ?",
+            "SELECT client_id, type, file_path, filename, uploaded_at, workspace FROM uploads WHERE client_id = ?",
             (client_id,)
         ).fetchone()
     if not row:
@@ -109,7 +118,8 @@ def get_upload(client_id: str) -> Optional[Dict[str, Any]]:
         "type": row[1],
         "file_path": row[2],
         "filename": row[3],
-        "uploaded_at": row[4]
+        "uploaded_at": row[4],
+        "workspace": row[5]
     }
 
 
@@ -133,17 +143,29 @@ def get_session(client_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def list_uploads(limit: int = 200) -> List[Dict[str, Any]]:
+def list_uploads(limit: int = 200, workspace: Optional[str] = None) -> List[Dict[str, Any]]:
     with sqlite3.connect(DB_PATH) as conn:
-        rows = conn.execute(
-            """
-            SELECT client_id, type, file_path, filename, uploaded_at
-            FROM uploads
-            ORDER BY uploaded_at DESC
-            LIMIT ?
-            """,
-            (limit,)
-        ).fetchall()
+        if workspace:
+            rows = conn.execute(
+                """
+                SELECT client_id, type, file_path, filename, uploaded_at, workspace
+                FROM uploads
+                WHERE workspace = ?
+                ORDER BY uploaded_at DESC
+                LIMIT ?
+                """,
+                (workspace, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT client_id, type, file_path, filename, uploaded_at, workspace
+                FROM uploads
+                ORDER BY uploaded_at DESC
+                LIMIT ?
+                """,
+                (limit,)
+            ).fetchall()
     results = []
     for row in rows:
         results.append({
@@ -151,7 +173,8 @@ def list_uploads(limit: int = 200) -> List[Dict[str, Any]]:
             "type": row[1],
             "file_path": row[2],
             "filename": row[3],
-            "uploaded_at": row[4]
+            "uploaded_at": row[4],
+            "workspace": row[5]
         })
     return results
 
