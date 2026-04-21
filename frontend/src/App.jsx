@@ -56,6 +56,34 @@ const BASE_MODEL_OPTIONS = [
   },
 ];
 
+const BASE_GEMINI_MODEL_OPTIONS = [
+  {
+    id: 'gemini:gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+  },
+  {
+    id: 'gemini:gemini-2.5-pro',
+    label: 'Gemini 2.5 Pro',
+    provider: 'gemini',
+    model: 'gemini-2.5-pro',
+  },
+  {
+    id: 'gemini:gemini-2.0-flash',
+    label: 'Gemini 2.0 Flash',
+    provider: 'gemini',
+    model: 'gemini-2.0-flash',
+  },
+  {
+    id: 'gemini:custom',
+    label: 'Custom Gemini Model',
+    provider: 'gemini',
+    custom: true,
+    customKey: 'gemini',
+  },
+];
+
 function App() {
   const GEMINI_MAX_IMAGE_COUNT = 4;
   const GEMINI_MAX_IMAGE_SIZE_MB = 5;
@@ -119,26 +147,6 @@ function App() {
     if (/^https?:\/\//i.test(path)) return path;
     return apiUrl(path);
   };
-  const geminiModelOptions = [
-    {
-      id: 'gemini:gemini-2.5-flash',
-      label: 'Gemini 2.5 Flash',
-      provider: 'gemini',
-      model: 'gemini-2.5-flash',
-    },
-    {
-      id: 'gemini:gemini-2.5-pro',
-      label: 'Gemini 2.5 Pro',
-      provider: 'gemini',
-      model: 'gemini-2.5-pro',
-    },
-    {
-      id: 'gemini:gemini-2.0-flash',
-      label: 'Gemini 2.0 Flash',
-      provider: 'gemini',
-      model: 'gemini-2.0-flash',
-    },
-  ];
   const [clientId, setClientId] = useState(null);
   const [excelData, setExcelData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -154,6 +162,7 @@ function App() {
           return {
             openai: typeof parsed.openai === 'string' ? parsed.openai : '',
             bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock : '',
+            gemini: typeof parsed.gemini === 'string' ? parsed.gemini : '',
           };
         }
       }
@@ -163,10 +172,22 @@ function App() {
     return {
       openai: '',
       bedrock: '',
+      gemini: '',
     };
   });
   const modelOptions = useMemo(
     () => BASE_MODEL_OPTIONS.map((model) => (
+      model.custom
+        ? {
+            ...model,
+            label: formatCustomModelLabel(model.label, customModelIds[model.customKey]),
+          }
+        : model
+    )),
+    [customModelIds]
+  );
+  const geminiModelOptions = useMemo(
+    () => BASE_GEMINI_MODEL_OPTIONS.map((model) => (
       model.custom
         ? {
             ...model,
@@ -192,7 +213,17 @@ function App() {
   const [geminiSessionMode, setGeminiSessionMode] = useState(null);
   const [geminiSocket, setGeminiSocket] = useState(null);
   const [geminiMessages, setGeminiMessages] = useState([]);
-  const [geminiSelectedModelId, setGeminiSelectedModelId] = useState(geminiModelOptions[0].id);
+  const [geminiSelectedModelId, setGeminiSelectedModelId] = useState(() => {
+    try {
+      const stored = localStorage.getItem('excelFlowGeminiSelectedModelId');
+      if (stored && BASE_GEMINI_MODEL_OPTIONS.some((model) => model.id === stored)) {
+        return stored;
+      }
+    } catch (error) {
+      console.warn('Failed to load selected Gemini model', error);
+    }
+    return BASE_GEMINI_MODEL_OPTIONS[0].id;
+  });
   const [geminiPdfUrl, setGeminiPdfUrl] = useState(null);
   const [geminiFilename, setGeminiFilename] = useState('');
   const [geminiDocText, setGeminiDocText] = useState('');
@@ -469,6 +500,14 @@ function App() {
       console.warn('Failed to persist selected model', error);
     }
   }, [selectedModelId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('excelFlowGeminiSelectedModelId', geminiSelectedModelId);
+    } catch (error) {
+      console.warn('Failed to persist selected Gemini model', error);
+    }
+  }, [geminiSelectedModelId]);
 
   useEffect(() => {
     try {
@@ -937,7 +976,7 @@ function App() {
       content: message
     }]);
     
-    const selectedModel = getResolvedModelConfig(selectedModelId);
+    const selectedModel = getResolvedModelConfig(selectedModelId, modelOptions);
     if (!selectedModel?.model) {
       setError(`Enter a custom ${selectedModel?.provider || 'model'} model ID in Settings before sending a message.`);
       return;
@@ -1000,8 +1039,11 @@ function App() {
       attachments: messageAttachments
     }]);
 
-    const selectedModel = geminiModelOptions.find((model) => model.id === geminiSelectedModelId)
-      || geminiModelOptions[0];
+    const selectedModel = getResolvedModelConfig(geminiSelectedModelId, geminiModelOptions);
+    if (!selectedModel?.model) {
+      setError('Enter a custom Gemini model ID in Settings before sending a message.');
+      return;
+    }
 
     const nextRequestId = `gemini_req_${Date.now()}_${geminiRequestCounter}`;
     setGeminiRequestCounter((prev) => prev + 1);
@@ -1169,7 +1211,7 @@ function App() {
   const handleParamChange = (key, value, cast = 'float') => {
     const nextValue = cast === 'int' ? Number.parseInt(value, 10) : Number.parseFloat(value);
     setModelParamsByModel((prev) => {
-      const targetModelId = settingsModelId || selectedModelId;
+      const targetModelId = settingsModelId || (activeWorkspace === 'gemini' ? geminiSelectedModelId : selectedModelId);
       const current = prev[targetModelId] || defaultModelParams;
       return {
         ...prev,
@@ -1181,8 +1223,8 @@ function App() {
     });
   };
 
-  const getResolvedModelConfig = (selectedId) => {
-    const selectedOption = modelOptions.find((model) => model.id === selectedId) || modelOptions[0];
+  const getResolvedModelConfig = (selectedId, options) => {
+    const selectedOption = options.find((model) => model.id === selectedId) || options[0];
     if (!selectedOption) return null;
     if (!selectedOption.custom) return selectedOption;
     return {
@@ -1218,6 +1260,22 @@ function App() {
     ];
     return groups.filter((group) => group.models.length > 0);
   }, [modelOptions]);
+
+  const groupedGeminiModelOptions = useMemo(() => {
+    const groups = [
+      {
+        id: 'gemini',
+        title: 'Gemini',
+        models: geminiModelOptions.filter((model) => model.provider === 'gemini' && !model.custom),
+      },
+      {
+        id: 'custom',
+        title: 'Custom',
+        models: geminiModelOptions.filter((model) => model.custom),
+      },
+    ];
+    return groups.filter((group) => group.models.length > 0);
+  }, [geminiModelOptions]);
 
   useEffect(() => {
     if (!isResizing) return;
@@ -1476,9 +1534,147 @@ function App() {
                 </div>
                 <p>{uploadHistory.length} uploads</p>
               </div>
+              <button
+                type="button"
+                className={`settings-button ${showSettings ? 'active' : ''}`}
+                onClick={() => {
+                  setShowSettings(true);
+                  setShowUploadManager(false);
+                  setSettingsModelId(null);
+                }}
+              >
+                <FiSettings />
+                Settings
+              </button>
             </aside>
             <div className="upload-content">
-              {showUploadManager ? (
+              {showSettings ? (
+                <div className="model-settings-panel">
+                  <div className="model-settings-header">
+                    <div>
+                      <h2>Model Settings</h2>
+                      <p>Choose a Gemini model, then customize its parameters.</p>
+                    </div>
+                    <button type="button" onClick={() => setShowSettings(false)}>
+                      Close
+                    </button>
+                  </div>
+                  {!settingsModelId ? (
+                    <div className="model-settings-groups">
+                      {groupedGeminiModelOptions.map((group) => (
+                        <section key={group.id} className="model-settings-group">
+                          <div className="model-settings-group-header">
+                            <h3>{group.title}</h3>
+                            <span>{group.models.length} models</span>
+                          </div>
+                          <div className="model-settings-chooser">
+                            {group.models.map((model) => (
+                              <button
+                                key={model.id}
+                                type="button"
+                                className="model-option"
+                                onClick={() => setSettingsModelId(model.id)}
+                              >
+                                <span>{model.label}</span>
+                                <small>{model.custom ? 'custom' : model.provider}</small>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  ) : (
+                    (() => {
+                      const settingsModel = geminiModelOptions.find((model) => model.id === settingsModelId);
+                      const activeSettings = modelParamsByModel[settingsModelId] || defaultModelParams;
+                      return (
+                        <div className="model-settings-detail">
+                          <div className="model-settings-controls">
+                            <button
+                              type="button"
+                              className="model-settings-back"
+                              onClick={() => setSettingsModelId(null)}
+                            >
+                              Back
+                            </button>
+                            <button
+                              type="button"
+                              className="model-settings-reset"
+                              onClick={() =>
+                                setModelParamsByModel((prev) => ({
+                                  ...prev,
+                                  [settingsModelId]: { ...defaultModelParams }
+                                }))
+                              }
+                            >
+                              Reset to default
+                            </button>
+                          </div>
+                          <div className="model-settings-meta">
+                            <div>
+                              <h3>{settingsModel?.label}</h3>
+                              <p>{settingsModel?.custom ? 'Custom Gemini model configuration' : `Provider: ${settingsModel?.provider}`}</p>
+                            </div>
+                          </div>
+                          {settingsModel?.custom && (
+                            <div className="model-setting-row model-setting-row-wide">
+                              <label htmlFor="param-custom-gemini-model-id">Model ID</label>
+                              <input
+                                id="param-custom-gemini-model-id"
+                                type="text"
+                                placeholder="Enter gemini model id"
+                                value={customModelIds[settingsModel.customKey] || ''}
+                                onChange={(event) => handleCustomModelIdChange(settingsModel.customKey, event.target.value)}
+                              />
+                            </div>
+                          )}
+                          <div className="model-settings-form-grid">
+                            <div className="model-setting-row">
+                              <label htmlFor="param-temperature-gemini">Temperature</label>
+                              <input
+                                id="param-temperature-gemini"
+                                type="number"
+                                min="0"
+                                max="2"
+                                step="0.1"
+                                value={activeSettings.temperature}
+                                onChange={(event) => handleParamChange('temperature', event.target.value, 'float')}
+                              />
+                            </div>
+                            <div className="model-setting-row">
+                              <label htmlFor="param-maxTokens-gemini">Max tokens</label>
+                              <input
+                                id="param-maxTokens-gemini"
+                                type="number"
+                                min="256"
+                                max="8192"
+                                step="128"
+                                value={activeSettings.maxTokens}
+                                onChange={(event) => handleParamChange('maxTokens', event.target.value, 'int')}
+                              />
+                            </div>
+                            <div className="model-setting-row">
+                              <label htmlFor="param-topP-gemini">Top P</label>
+                              <input
+                                id="param-topP-gemini"
+                                type="number"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                value={activeSettings.topP}
+                                onChange={(event) => handleParamChange('topP', event.target.value, 'float')}
+                              />
+                            </div>
+                          </div>
+                          <p className="model-settings-note">
+                            Gemini uses temperature, top_p, and max_output_tokens.
+                          </p>
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              ) : showUploadManager ? (
                 <div className="upload-manager">
                   <div className="upload-manager-header">
                     <div>
