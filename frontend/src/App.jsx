@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FiSettings } from 'react-icons/fi';
 import FileUpload from './components/FileUpload';
 import PdfUpload from './components/PdfUpload';
@@ -109,8 +109,8 @@ function App() {
   })();
   const apiBase = configuredApiBase || '/api';
   const wsBase = configuredWsBase || wsBaseFromApi;
-  const apiUrl = (path) => `${apiBase}${path}`;
-  const wsUrl = (path) => `${wsBase}${path}`;
+  const apiUrl = useCallback((path) => `${apiBase}${path}`, [apiBase]);
+  const wsUrl = useCallback((path) => `${wsBase}${path}`, [wsBase]);
   const formatCustomModelLabel = (baseLabel, modelId) => (
     modelId ? `${baseLabel}: ${modelId}` : baseLabel
   );
@@ -143,11 +143,11 @@ function App() {
     }
     return message || fallbackMessage;
   };
-  const resolveFileUrl = (path) => {
+  const resolveFileUrl = useCallback((path) => {
     if (!path) return null;
     if (/^https?:\/\//i.test(path)) return path;
     return apiUrl(path);
-  };
+  }, [apiUrl]);
   const [clientId, setClientId] = useState(null);
   const [excelData, setExcelData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -253,7 +253,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsModelId, setSettingsModelId] = useState(null);
   const [isWaiting, setIsWaiting] = useState(false);
-  const [ignoreNextResponse, setIgnoreNextResponse] = useState(false);
+  const ignoreNextResponseRef = useRef(false);
   const [requestCounter, setRequestCounter] = useState(0);
   const canceledRequestIdsRef = useRef(new Set());
   const pendingRequestIdRef = useRef(null);
@@ -290,161 +290,7 @@ function App() {
     },
   ];
 
-  // Initialize WebSocket connection when clientId is set
-  useEffect(() => {
-    if (!clientId || !sessionMode) return;
-
-    // For WebSocket connections, we still need to use the full URL
-    const socketUrl = sessionMode === 'pdf'
-      ? wsUrl(`/ws/pdf/${clientId}`)
-      : sessionMode === 'doc'
-        ? wsUrl(`/ws/doc/${clientId}`)
-        : wsUrl(`/ws/${clientId}`);
-    const ws = new WebSocket(socketUrl);
-    
-    ws.onopen = () => {
-      console.log('WebSocket connected');
-    };
-    
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-
-      if (data.type === 'canceled') {
-        setIsWaiting(false);
-        return;
-      }
-
-      if (data.request_id
-        && latestRequestIdRef.current
-        && data.request_id !== latestRequestIdRef.current
-        && !canceledRequestIdsRef.current.has(data.request_id)) {
-        return;
-      }
-
-      if (data.request_id && canceledRequestIdsRef.current.has(data.request_id)) {
-        canceledRequestIdsRef.current.delete(data.request_id);
-        setIsWaiting(false);
-        return;
-      }
-      
-      if (data.type === 'excel_update' && sessionMode === 'spreadsheet') {
-        // Update Excel data when changes are made
-        setExcelData({
-          data: data.data,
-          metadata: data.metadata
-        });
-      } else if (!ignoreNextResponse) {
-        // Handle chat messages
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: data.response
-        }]);
-        setIsWaiting(false);
-        if (data.request_id && pendingRequestIdRef.current === data.request_id) {
-          pendingRequestIdRef.current = null;
-        }
-        
-        // If Excel was modified, fetch the latest data
-        if (data.excel_modified && sessionMode === 'spreadsheet') {
-          fetchExcelData();
-        }
-      }
-      if (ignoreNextResponse) {
-        setIgnoreNextResponse(false);
-      }
-    };
-    
-    ws.onclose = () => {
-      console.log('WebSocket disconnected');
-      setIsWaiting(false);
-    };
-    
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setError('Connection error. Please try again.');
-      setIsWaiting(false);
-    };
-    
-    setSocket(ws);
-    
-    // Fetch initial Excel data
-    if (sessionMode === 'spreadsheet') {
-      fetchExcelData();
-    }
-    
-    // Clean up WebSocket connection on component unmount
-    return () => {
-      if (ws) {
-        ws.close();
-      }
-    };
-  }, [clientId, sessionMode]);
-
-  useEffect(() => {
-    if (!geminiClientId || !geminiSessionMode) return;
-
-    const ws = new WebSocket(wsUrl(`/ws/gemini/${geminiClientId}`));
-
-    ws.onopen = () => {
-      console.log('Gemini WebSocket connected');
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-
-      if (data.type === 'canceled') {
-        setGeminiIsWaiting(false);
-        return;
-      }
-
-      if (data.request_id
-        && geminiLatestRequestIdRef.current
-        && data.request_id !== geminiLatestRequestIdRef.current
-        && !geminiCanceledRequestIdsRef.current.has(data.request_id)) {
-        return;
-      }
-
-      if (data.request_id && geminiCanceledRequestIdsRef.current.has(data.request_id)) {
-        geminiCanceledRequestIdsRef.current.delete(data.request_id);
-        setGeminiIsWaiting(false);
-        return;
-      }
-
-      setGeminiMessages(prev => [...prev, {
-        role: 'assistant',
-        content: data.response
-      }]);
-      setGeminiIsWaiting(false);
-      if (data.request_id && geminiPendingRequestIdRef.current === data.request_id) {
-        geminiPendingRequestIdRef.current = null;
-      }
-    };
-
-    ws.onclose = () => {
-      console.log('Gemini WebSocket disconnected');
-      setGeminiIsWaiting(false);
-    };
-
-    ws.onerror = (error) => {
-      console.error('Gemini WebSocket error:', error);
-      setError('Gemini connection error. Please try again.');
-      setGeminiIsWaiting(false);
-    };
-
-    setGeminiSocket(ws);
-
-    if (geminiSessionMode === 'spreadsheet') {
-      fetchGeminiExcelData(geminiClientId);
-    }
-
-    return () => {
-      if (ws) {
-        ws.close();
-      }
-    };
-  }, [geminiClientId, geminiSessionMode]);
-
-  const loadUploads = async (workspace = 'all') => {
+  const loadUploads = useCallback(async (workspace = 'all') => {
     try {
       const response = await fetch(apiUrl(`/uploads?workspace=${workspace}`));
       if (!response.ok) {
@@ -463,11 +309,11 @@ function App() {
     } catch (error) {
       console.warn('Failed to load upload history', error);
     }
-  };
+  }, [apiUrl, resolveFileUrl]);
 
   useEffect(() => {
     loadUploads('all');
-  }, []);
+  }, [loadUploads]);
 
   useEffect(() => {
     try {
@@ -669,7 +515,8 @@ function App() {
     });
   const recentUploads = uploadHistory.slice(0, 2);
 
-  const fetchExcelData = async () => {
+  const fetchExcelData = useCallback(async () => {
+    if (!clientId) return;
     try {
       const response = await fetch(apiUrl(`/excel/${clientId}`));
       if (!response.ok) {
@@ -681,9 +528,9 @@ function App() {
       console.error('Error fetching Excel data:', error);
       setError('Failed to load Excel data. Please try again.');
     }
-  };
+  }, [apiUrl, clientId]);
 
-  const fetchGeminiExcelData = async (clientIdToLoad) => {
+  const fetchGeminiExcelData = useCallback(async (clientIdToLoad) => {
     try {
       const response = await fetch(apiUrl(`/excel/${clientIdToLoad}`));
       if (!response.ok) {
@@ -695,7 +542,151 @@ function App() {
       console.error('Error fetching Gemini Excel data:', error);
       setError('Failed to load Excel data. Please try again.');
     }
-  };
+  }, [apiUrl]);
+
+  // Initialize WebSocket connection when clientId is set
+  useEffect(() => {
+    if (!clientId || !sessionMode) return;
+
+    const socketUrl = sessionMode === 'pdf'
+      ? wsUrl(`/ws/pdf/${clientId}`)
+      : sessionMode === 'doc'
+        ? wsUrl(`/ws/doc/${clientId}`)
+        : wsUrl(`/ws/${clientId}`);
+    const ws = new WebSocket(socketUrl);
+
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'canceled') {
+        setIsWaiting(false);
+        return;
+      }
+
+      if (data.request_id
+        && latestRequestIdRef.current
+        && data.request_id !== latestRequestIdRef.current
+        && !canceledRequestIdsRef.current.has(data.request_id)) {
+        return;
+      }
+
+      if (data.request_id && canceledRequestIdsRef.current.has(data.request_id)) {
+        canceledRequestIdsRef.current.delete(data.request_id);
+        setIsWaiting(false);
+        return;
+      }
+
+      if (data.type === 'excel_update' && sessionMode === 'spreadsheet') {
+        setExcelData({
+          data: data.data,
+          metadata: data.metadata
+        });
+      } else if (!ignoreNextResponseRef.current) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: data.response
+        }]);
+        setIsWaiting(false);
+        if (data.request_id && pendingRequestIdRef.current === data.request_id) {
+          pendingRequestIdRef.current = null;
+        }
+
+        if (data.excel_modified && sessionMode === 'spreadsheet') {
+          fetchExcelData();
+        }
+      }
+      if (ignoreNextResponseRef.current) {
+        ignoreNextResponseRef.current = false;
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      setIsWaiting(false);
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setError('Connection error. Please try again.');
+      setIsWaiting(false);
+    };
+
+    setSocket(ws);
+
+    if (sessionMode === 'spreadsheet') {
+      fetchExcelData();
+    }
+
+    return () => {
+      ws.close();
+    };
+  }, [clientId, fetchExcelData, sessionMode, wsUrl]);
+
+  useEffect(() => {
+    if (!geminiClientId || !geminiSessionMode) return;
+
+    const ws = new WebSocket(wsUrl(`/ws/gemini/${geminiClientId}`));
+
+    ws.onopen = () => {
+      console.log('Gemini WebSocket connected');
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'canceled') {
+        setGeminiIsWaiting(false);
+        return;
+      }
+
+      if (data.request_id
+        && geminiLatestRequestIdRef.current
+        && data.request_id !== geminiLatestRequestIdRef.current
+        && !geminiCanceledRequestIdsRef.current.has(data.request_id)) {
+        return;
+      }
+
+      if (data.request_id && geminiCanceledRequestIdsRef.current.has(data.request_id)) {
+        geminiCanceledRequestIdsRef.current.delete(data.request_id);
+        setGeminiIsWaiting(false);
+        return;
+      }
+
+      setGeminiMessages(prev => [...prev, {
+        role: 'assistant',
+        content: data.response
+      }]);
+      setGeminiIsWaiting(false);
+      if (data.request_id && geminiPendingRequestIdRef.current === data.request_id) {
+        geminiPendingRequestIdRef.current = null;
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('Gemini WebSocket disconnected');
+      setGeminiIsWaiting(false);
+    };
+
+    ws.onerror = (error) => {
+      console.error('Gemini WebSocket error:', error);
+      setError('Gemini connection error. Please try again.');
+      setGeminiIsWaiting(false);
+    };
+
+    setGeminiSocket(ws);
+
+    if (geminiSessionMode === 'spreadsheet') {
+      fetchGeminiExcelData(geminiClientId);
+    }
+
+    return () => {
+      ws.close();
+    };
+  }, [fetchGeminiExcelData, geminiClientId, geminiSessionMode, wsUrl]);
 
   const readImageAsDataUrl = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2057,7 +2048,7 @@ function App() {
                   if (pendingId) {
                     canceledRequestIdsRef.current.add(pendingId);
                   } else {
-                    setIgnoreNextResponse(true);
+                    ignoreNextResponseRef.current = true;
                   }
                   setIsWaiting(false);
                 }}

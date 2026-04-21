@@ -139,18 +139,8 @@ const ExcelViewer = ({ data, metadata, onBack, onSelectionSummaryChange, clearSe
     return columnName;
   };
 
-  if (!data || !metadata) {
-    return <div>Loading Excel data...</div>;
-  }
-
-  const topSummaryRows = frozenRowCount > 0 ? rawRows.slice(0, frozenRowCount) : undefined;
-  const rows = frozenRowCount > 0 ? rawRows.slice(frozenRowCount) : rawRows;
-
-  const maxFrozenRows = Math.min(10, rawRows.length);
-  const maxFrozenColumns = Math.min(10, metadata.columns);
-
   const selectionSummary = useMemo(() => {
-    if (!selection) return null;
+    if (!selection || !metadata) return null;
     const minRow = Math.min(selection.startRow, selection.endRow);
     const maxRow = Math.max(selection.startRow, selection.endRow);
     const minCol = Math.min(selection.startCol, selection.endCol);
@@ -166,7 +156,7 @@ const ExcelViewer = ({ data, metadata, onBack, onSelectionSummaryChange, clearSe
       endCell,
       rangeLabel: `${startCell}:${endCell}`
     };
-  }, [selection]);
+  }, [metadata, selection]);
 
   useEffect(() => {
     onSelectionSummaryChange?.(selectionSummary);
@@ -182,6 +172,16 @@ const ExcelViewer = ({ data, metadata, onBack, onSelectionSummaryChange, clearSe
     if (clearSelectionToken === undefined) return;
     clearSelection();
   }, [clearSelectionToken]);
+
+  if (!data || !metadata) {
+    return <div>Loading Excel data...</div>;
+  }
+
+  const topSummaryRows = frozenRowCount > 0 ? rawRows.slice(0, frozenRowCount) : undefined;
+  const rows = frozenRowCount > 0 ? rawRows.slice(frozenRowCount) : rawRows;
+
+  const maxFrozenRows = Math.min(10, rawRows.length);
+  const maxFrozenColumns = Math.min(10, metadata.columns);
 
   const handleCellMouseDown = ({ row, column }) => {
     if (!row || !column) return;
