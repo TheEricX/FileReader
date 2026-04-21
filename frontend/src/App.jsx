@@ -9,6 +9,53 @@ import DocViewer from './components/DocViewer';
 import ChatInterface from './components/ChatInterface';
 import './App.css';
 
+const BASE_MODEL_OPTIONS = [
+  {
+    id: 'openai:gpt-4o',
+    label: 'OpenAI GPT-4o',
+    provider: 'openai',
+    model: 'gpt-4o',
+  },
+  {
+    id: 'openai:gpt-4.1',
+    label: 'OpenAI GPT-4.1',
+    provider: 'openai',
+    model: 'gpt-4.1',
+  },
+  {
+    id: 'openai:gpt-4.1-mini',
+    label: 'OpenAI GPT-4.1 Mini',
+    provider: 'openai',
+    model: 'gpt-4.1-mini',
+  },
+  {
+    id: 'openai:gpt-4o-mini',
+    label: 'OpenAI GPT-4o Mini',
+    provider: 'openai',
+    model: 'gpt-4o-mini',
+  },
+  {
+    id: 'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    label: 'AWS Bedrock Claude Sonnet 4.5',
+    provider: 'bedrock',
+    model: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  },
+  {
+    id: 'openai:custom',
+    label: 'Custom OpenAI Model',
+    provider: 'openai',
+    custom: true,
+    customKey: 'openai',
+  },
+  {
+    id: 'bedrock:custom',
+    label: 'Custom Bedrock Model',
+    provider: 'bedrock',
+    custom: true,
+    customKey: 'bedrock',
+  },
+];
+
 function App() {
   const GEMINI_MAX_IMAGE_COUNT = 4;
   const GEMINI_MAX_IMAGE_SIZE_MB = 5;
@@ -35,25 +82,43 @@ function App() {
   const wsBase = configuredWsBase || wsBaseFromApi;
   const apiUrl = (path) => `${apiBase}${path}`;
   const wsUrl = (path) => `${wsBase}${path}`;
+  const formatCustomModelLabel = (baseLabel, modelId) => (
+    modelId ? `${baseLabel}: ${modelId}` : baseLabel
+  );
+  const readErrorMessage = async (response, fallbackMessage) => {
+    const rawText = await response.text();
+    if (!rawText) {
+      return fallbackMessage;
+    }
+
+    try {
+      const errorData = JSON.parse(rawText);
+      if (errorData && typeof errorData.error === 'string' && errorData.error.trim()) {
+        return errorData.error;
+      }
+    } catch (parseError) {
+      // Fall back to plain text responses.
+    }
+
+    return rawText;
+  };
+  const getRequestErrorMessage = (error, fallbackMessage) => {
+    const message = error?.message || '';
+    if (
+      error instanceof TypeError
+      || /failed to fetch/i.test(message)
+      || /networkerror/i.test(message)
+      || /load failed/i.test(message)
+    ) {
+      return 'Cannot reach the backend. Make sure the FastAPI server is running on http://localhost:8000.';
+    }
+    return message || fallbackMessage;
+  };
   const resolveFileUrl = (path) => {
     if (!path) return null;
     if (/^https?:\/\//i.test(path)) return path;
     return apiUrl(path);
   };
-  const modelOptions = [
-    {
-      id: 'openai:gpt-4o',
-      label: 'OpenAI GPT-4o',
-      provider: 'openai',
-      model: 'gpt-4o',
-    },
-    {
-      id: 'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-      label: 'AWS Bedrock Claude Sonnet 4.5',
-      provider: 'bedrock',
-      model: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    },
-  ];
   const geminiModelOptions = [
     {
       id: 'gemini:gemini-2.5-flash',
@@ -80,16 +145,47 @@ function App() {
   const [error, setError] = useState(null);
   const [socket, setSocket] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [customModelIds, setCustomModelIds] = useState(() => {
+    try {
+      const stored = localStorage.getItem('excelFlowCustomModelIds');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            openai: typeof parsed.openai === 'string' ? parsed.openai : '',
+            bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock : '',
+          };
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load custom model ids', error);
+    }
+    return {
+      openai: '',
+      bedrock: '',
+    };
+  });
+  const modelOptions = useMemo(
+    () => BASE_MODEL_OPTIONS.map((model) => (
+      model.custom
+        ? {
+            ...model,
+            label: formatCustomModelLabel(model.label, customModelIds[model.customKey]),
+          }
+        : model
+    )),
+    [customModelIds]
+  );
   const [selectedModelId, setSelectedModelId] = useState(() => {
     try {
       const stored = localStorage.getItem('excelFlowSelectedModelId');
-      if (stored && modelOptions.some((model) => model.id === stored)) {
+      if (stored && BASE_MODEL_OPTIONS.some((model) => model.id === stored)) {
         return stored;
       }
     } catch (error) {
       console.warn('Failed to load selected model', error);
     }
-    return modelOptions[1].id;
+    return 'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0';
   });
   const [activeWorkspace, setActiveWorkspace] = useState(null);
   const [geminiClientId, setGeminiClientId] = useState(null);
@@ -376,6 +472,14 @@ function App() {
 
   useEffect(() => {
     try {
+      localStorage.setItem('excelFlowCustomModelIds', JSON.stringify(customModelIds));
+    } catch (error) {
+      console.warn('Failed to persist custom model ids', error);
+    }
+  }, [customModelIds]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem('excelFlowModelParamsByModel', JSON.stringify(modelParamsByModel));
     } catch (error) {
       console.warn('Failed to persist model params', error);
@@ -428,18 +532,7 @@ function App() {
         method: 'DELETE'
       });
       if (!response.ok && response.status !== 404) {
-        let errorMessage = 'Failed to delete upload.';
-        try {
-          const errorData = await response.json();
-          if (errorData && errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch (parseError) {
-          const errorText = await response.text();
-          if (errorText) {
-            errorMessage = errorText;
-          }
-        }
+        const errorMessage = await readErrorMessage(response, 'Failed to delete upload.');
         throw new Error(errorMessage);
       }
       setUploadHistory((prev) => prev.filter((item) => item.clientId !== clientIdToRemove));
@@ -636,18 +729,7 @@ function App() {
       console.log('Response status:', response.status);
       
       if (!response.ok) {
-        let errorMessage = 'Failed to upload file. Please try again.';
-        try {
-          const errorData = await response.json();
-          if (errorData && errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch (parseError) {
-          const errorText = await response.text();
-          if (errorText) {
-            errorMessage = errorText;
-          }
-        }
+        const errorMessage = await readErrorMessage(response, 'Failed to upload file. Please try again.');
         console.error('Error response:', errorMessage);
         throw new Error(errorMessage);
       }
@@ -660,7 +742,7 @@ function App() {
       await loadUploads('default');
     } catch (error) {
       console.error('Error uploading file:', error);
-      setError(error?.message || 'Failed to upload file. Please try again.');
+      setError(getRequestErrorMessage(error, 'Failed to upload file. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -682,18 +764,7 @@ function App() {
       });
 
       if (!response.ok) {
-        let errorMessage = 'Failed to upload PDF. Please try again.';
-        try {
-          const errorData = await response.json();
-          if (errorData && errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch (parseError) {
-          const errorText = await response.text();
-          if (errorText) {
-            errorMessage = errorText;
-          }
-        }
+        const errorMessage = await readErrorMessage(response, 'Failed to upload PDF. Please try again.');
         console.error('Error response:', errorMessage);
         throw new Error(errorMessage);
       }
@@ -710,7 +781,7 @@ function App() {
       await loadUploads('default');
     } catch (error) {
       console.error('Error uploading PDF:', error);
-      setError(error?.message || 'Failed to upload PDF. Please try again.');
+      setError(getRequestErrorMessage(error, 'Failed to upload PDF. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -732,18 +803,7 @@ function App() {
       });
 
       if (!response.ok) {
-        let errorMessage = 'Failed to upload DOCX. Please try again.';
-        try {
-          const errorData = await response.json();
-          if (errorData && errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch (parseError) {
-          const errorText = await response.text();
-          if (errorText) {
-            errorMessage = errorText;
-          }
-        }
+        const errorMessage = await readErrorMessage(response, 'Failed to upload DOCX. Please try again.');
         console.error('Error response:', errorMessage);
         throw new Error(errorMessage);
       }
@@ -758,7 +818,7 @@ function App() {
       await loadUploads('default');
     } catch (error) {
       console.error('Error uploading DOCX:', error);
-      setError(error?.message || 'Failed to upload DOCX. Please try again.');
+      setError(getRequestErrorMessage(error, 'Failed to upload DOCX. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -780,18 +840,7 @@ function App() {
       });
 
       if (!response.ok) {
-        let errorMessage = 'Failed to upload file. Please try again.';
-        try {
-          const errorData = await response.json();
-          if (errorData && errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch (parseError) {
-          const errorText = await response.text();
-          if (errorText) {
-            errorMessage = errorText;
-          }
-        }
+        const errorMessage = await readErrorMessage(response, 'Failed to upload file. Please try again.');
         throw new Error(errorMessage);
       }
 
@@ -802,7 +851,7 @@ function App() {
       await loadUploads('gemini');
     } catch (error) {
       console.error('Error uploading Gemini file:', error);
-      setError(error?.message || 'Failed to upload file. Please try again.');
+      setError(getRequestErrorMessage(error, 'Failed to upload file. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -824,18 +873,7 @@ function App() {
       });
 
       if (!response.ok) {
-        let errorMessage = 'Failed to upload PDF. Please try again.';
-        try {
-          const errorData = await response.json();
-          if (errorData && errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch (parseError) {
-          const errorText = await response.text();
-          if (errorText) {
-            errorMessage = errorText;
-          }
-        }
+        const errorMessage = await readErrorMessage(response, 'Failed to upload PDF. Please try again.');
         throw new Error(errorMessage);
       }
 
@@ -847,7 +885,7 @@ function App() {
       await loadUploads('gemini');
     } catch (error) {
       console.error('Error uploading Gemini PDF:', error);
-      setError(error?.message || 'Failed to upload PDF. Please try again.');
+      setError(getRequestErrorMessage(error, 'Failed to upload PDF. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -869,18 +907,7 @@ function App() {
       });
 
       if (!response.ok) {
-        let errorMessage = 'Failed to upload DOCX. Please try again.';
-        try {
-          const errorData = await response.json();
-          if (errorData && errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch (parseError) {
-          const errorText = await response.text();
-          if (errorText) {
-            errorMessage = errorText;
-          }
-        }
+        const errorMessage = await readErrorMessage(response, 'Failed to upload DOCX. Please try again.');
         throw new Error(errorMessage);
       }
 
@@ -892,7 +919,7 @@ function App() {
       await loadUploads('gemini');
     } catch (error) {
       console.error('Error uploading Gemini DOCX:', error);
-      setError(error?.message || 'Failed to upload DOCX. Please try again.');
+      setError(getRequestErrorMessage(error, 'Failed to upload DOCX. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -910,7 +937,11 @@ function App() {
       content: message
     }]);
     
-    const selectedModel = modelOptions.find((model) => model.id === selectedModelId) || modelOptions[0];
+    const selectedModel = getResolvedModelConfig(selectedModelId);
+    if (!selectedModel?.model) {
+      setError(`Enter a custom ${selectedModel?.provider || 'model'} model ID in Settings before sending a message.`);
+      return;
+    }
 
     const activeParams = modelParamsByModel[selectedModelId] || defaultModelParams;
 
@@ -1058,24 +1089,57 @@ function App() {
     setGeminiImageAttachments([]);
   };
 
+  const resetWorkspaceSessions = () => {
+    if (socket) {
+      socket.close();
+    }
+    if (geminiSocket) {
+      geminiSocket.close();
+    }
+
+    setSocket(null);
+    setClientId(null);
+    setExcelData(null);
+    setMessages([]);
+    setSessionMode(null);
+    setPdfUrl(null);
+    setPdfFilename('');
+    setDocText('');
+    setSelectionSummary(null);
+    setChatDraft('');
+    setShowUploadManager(false);
+    setShowSettings(false);
+    setSelectedMode('spreadsheet');
+
+    setGeminiSocket(null);
+    setGeminiClientId(null);
+    setGeminiExcelData(null);
+    setGeminiMessages([]);
+    setGeminiSessionMode(null);
+    setGeminiPdfUrl(null);
+    setGeminiFilename('');
+    setGeminiDocText('');
+    setGeminiChatDraft('');
+    setGeminiSelectedMode('spreadsheet');
+    setGeminiImageAttachments([]);
+  };
+
   const handleResizeStart = (e) => {
     e.preventDefault();
     setIsResizing(true);
   };
 
   const handleEnterWorkspace = async (workspace) => {
+    resetWorkspaceSessions();
     setActiveWorkspace(workspace);
-    setShowUploadManager(false);
     setShowHubUploadManager(false);
-    setShowSettings(false);
     setError(null);
     await loadUploads(workspace);
   };
 
   const handleBackToHome = async () => {
+    resetWorkspaceSessions();
     setActiveWorkspace(null);
-    setShowUploadManager(false);
-    setShowSettings(false);
     setShowHubUploadManager(false);
     setError(null);
     await loadUploads('all');
@@ -1116,6 +1180,44 @@ function App() {
       };
     });
   };
+
+  const getResolvedModelConfig = (selectedId) => {
+    const selectedOption = modelOptions.find((model) => model.id === selectedId) || modelOptions[0];
+    if (!selectedOption) return null;
+    if (!selectedOption.custom) return selectedOption;
+    return {
+      ...selectedOption,
+      model: (customModelIds[selectedOption.customKey] || '').trim(),
+    };
+  };
+
+  const handleCustomModelIdChange = (providerKey, value) => {
+    setCustomModelIds((prev) => ({
+      ...prev,
+      [providerKey]: value,
+    }));
+  };
+
+  const groupedModelOptions = useMemo(() => {
+    const groups = [
+      {
+        id: 'openai',
+        title: 'OpenAI',
+        models: modelOptions.filter((model) => model.provider === 'openai' && !model.custom),
+      },
+      {
+        id: 'bedrock',
+        title: 'Bedrock',
+        models: modelOptions.filter((model) => model.provider === 'bedrock' && !model.custom),
+      },
+      {
+        id: 'custom',
+        title: 'Custom',
+        models: modelOptions.filter((model) => model.custom),
+      },
+    ];
+    return groups.filter((group) => group.models.length > 0);
+  }, [modelOptions]);
 
   useEffect(() => {
     if (!isResizing) return;
@@ -1689,21 +1791,36 @@ function App() {
                     </button>
                   </div>
                   {!settingsModelId ? (
-                    <div className="model-settings-chooser">
-                      {modelOptions.map((model) => (
-                        <button
-                          key={model.id}
-                          type="button"
-                          className="model-option"
-                          onClick={() => setSettingsModelId(model.id)}
-                        >
-                          <span>{model.label}</span>
-                          <small>{model.provider}</small>
-                        </button>
+                    <div className="model-settings-groups">
+                      {groupedModelOptions.map((group) => (
+                        <section key={group.id} className="model-settings-group">
+                          <div className="model-settings-group-header">
+                            <h3>{group.title}</h3>
+                            <span>{group.models.length} models</span>
+                          </div>
+                          <div className="model-settings-chooser">
+                            {group.models.map((model) => (
+                              <button
+                                key={model.id}
+                                type="button"
+                                className="model-option"
+                                onClick={() => setSettingsModelId(model.id)}
+                              >
+                                <span>{model.label}</span>
+                                <small>{model.custom ? 'custom' : model.provider}</small>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
                       ))}
                     </div>
                   ) : (
                     <>
+                      {(() => {
+                        const settingsModel = modelOptions.find((model) => model.id === settingsModelId);
+                        const activeSettings = modelParamsByModel[settingsModelId] || defaultModelParams;
+                        return (
+                          <div className="model-settings-detail">
                       <div className="model-settings-controls">
                         <button
                           type="button"
@@ -1725,69 +1842,92 @@ function App() {
                           Reset to default
                         </button>
                       </div>
-                      <div className="model-setting-row">
-                        <label htmlFor="param-temperature">Temperature</label>
-                        <input
-                          id="param-temperature"
-                          type="number"
-                          min="0"
-                          max="2"
-                          step="0.1"
-                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).temperature}
-                          onChange={(event) => handleParamChange('temperature', event.target.value, 'float')}
-                        />
-                      </div>
-                      <div className="model-setting-row">
-                        <label htmlFor="param-maxTokens">Max tokens</label>
-                        <input
-                          id="param-maxTokens"
-                          type="number"
-                          min="256"
-                          max="8192"
-                          step="128"
-                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).maxTokens}
-                          onChange={(event) => handleParamChange('maxTokens', event.target.value, 'int')}
-                        />
-                      </div>
-                      <div className="model-setting-row">
-                        <label htmlFor="param-topP">Top P</label>
-                        <input
-                          id="param-topP"
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.05"
-                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).topP}
-                          onChange={(event) => handleParamChange('topP', event.target.value, 'float')}
-                        />
-                      </div>
-                      <div className="model-setting-row">
-                        <label htmlFor="param-presencePenalty">Presence penalty</label>
-                        <input
-                          id="param-presencePenalty"
-                          type="number"
-                          min="-2"
-                          max="2"
-                          step="0.1"
-                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).presencePenalty}
-                          onChange={(event) => handleParamChange('presencePenalty', event.target.value, 'float')}
-                        />
-                      </div>
-                      <div className="model-setting-row">
-                        <label htmlFor="param-frequencyPenalty">Frequency penalty</label>
-                        <input
-                          id="param-frequencyPenalty"
-                          type="number"
-                          min="-2"
-                          max="2"
-                          step="0.1"
-                          value={(modelParamsByModel[settingsModelId] || defaultModelParams).frequencyPenalty}
-                          onChange={(event) => handleParamChange('frequencyPenalty', event.target.value, 'float')}
-                        />
-                      </div>
-                      <p className="model-settings-note">
-                        Penalties apply to OpenAI models. Bedrock uses temperature or top_p plus max_tokens.
-                      </p>
+                            <div className="model-settings-meta">
+                              <div>
+                                <h3>{settingsModel?.label}</h3>
+                                <p>{settingsModel?.custom ? 'Custom model configuration' : `Provider: ${settingsModel?.provider}`}</p>
+                              </div>
+                            </div>
+                            {settingsModel?.custom && (
+                              <div className="model-setting-row model-setting-row-wide">
+                                <label htmlFor="param-custom-model-id">Model ID</label>
+                                <input
+                                  id="param-custom-model-id"
+                                  type="text"
+                                  placeholder={`Enter ${settingsModel.provider} model id`}
+                                  value={customModelIds[settingsModel.customKey] || ''}
+                                  onChange={(event) => handleCustomModelIdChange(settingsModel.customKey, event.target.value)}
+                                />
+                              </div>
+                            )}
+                            <div className="model-settings-form-grid">
+                              <div className="model-setting-row">
+                                <label htmlFor="param-temperature">Temperature</label>
+                                <input
+                                  id="param-temperature"
+                                  type="number"
+                                  min="0"
+                                  max="2"
+                                  step="0.1"
+                                  value={activeSettings.temperature}
+                                  onChange={(event) => handleParamChange('temperature', event.target.value, 'float')}
+                                />
+                              </div>
+                              <div className="model-setting-row">
+                                <label htmlFor="param-maxTokens">Max tokens</label>
+                                <input
+                                  id="param-maxTokens"
+                                  type="number"
+                                  min="256"
+                                  max="8192"
+                                  step="128"
+                                  value={activeSettings.maxTokens}
+                                  onChange={(event) => handleParamChange('maxTokens', event.target.value, 'int')}
+                                />
+                              </div>
+                              <div className="model-setting-row">
+                                <label htmlFor="param-topP">Top P</label>
+                                <input
+                                  id="param-topP"
+                                  type="number"
+                                  min="0"
+                                  max="1"
+                                  step="0.05"
+                                  value={activeSettings.topP}
+                                  onChange={(event) => handleParamChange('topP', event.target.value, 'float')}
+                                />
+                              </div>
+                              <div className="model-setting-row">
+                                <label htmlFor="param-presencePenalty">Presence penalty</label>
+                                <input
+                                  id="param-presencePenalty"
+                                  type="number"
+                                  min="-2"
+                                  max="2"
+                                  step="0.1"
+                                  value={activeSettings.presencePenalty}
+                                  onChange={(event) => handleParamChange('presencePenalty', event.target.value, 'float')}
+                                />
+                              </div>
+                              <div className="model-setting-row">
+                                <label htmlFor="param-frequencyPenalty">Frequency penalty</label>
+                                <input
+                                  id="param-frequencyPenalty"
+                                  type="number"
+                                  min="-2"
+                                  max="2"
+                                  step="0.1"
+                                  value={activeSettings.frequencyPenalty}
+                                  onChange={(event) => handleParamChange('frequencyPenalty', event.target.value, 'float')}
+                                />
+                              </div>
+                            </div>
+                            <p className="model-settings-note">
+                              Penalties apply to OpenAI models. Bedrock uses temperature or top_p plus max_tokens.
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </>
                   )}
                 </div>

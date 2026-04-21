@@ -673,35 +673,41 @@
 }
 
 .model-setting-row {
-  display: grid;
-  grid-template-columns: 1fr 84px;
-  gap: 8px;
-  align-items: center;
-  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  font-size: 0.82rem;
   color: var(--text-muted);
 }
 
 .model-setting-row input {
+  width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.25rem 0.4rem;
+  padding: 0.7rem 0.8rem;
   background: var(--surface);
   color: var(--text);
-  font-size: 0.78rem;
-  text-align: right;
+  font-size: 0.95rem;
+  text-align: left;
+}
+
+.model-setting-row-wide {
+  grid-column: 1 / -1;
 }
 
 .model-settings-note {
   margin: 0;
-  font-size: 0.72rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
   color: var(--text-muted);
 }
 
 .model-settings-panel {
-  width: min(820px, 100%);
+  width: min(1180px, 100%);
   min-height: 360px;
   max-height: min(80vh, 100%);
-  padding: 1.5rem;
+  padding: 2rem;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -744,7 +750,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 
 .model-settings-back {
@@ -769,10 +775,42 @@
   cursor: pointer;
 }
 
+.model-settings-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.model-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.model-settings-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.model-settings-group-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.model-settings-group-header span {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
 .model-settings-chooser {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
 }
 
 .model-option {
@@ -781,23 +819,71 @@
   background: var(--surface-muted);
   color: var(--text);
   border-radius: var(--radius-lg);
-  padding: 0.9rem 1rem;
+  min-height: 108px;
+  padding: 1.1rem 1.1rem;
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 0.45rem;
   cursor: pointer;
+}
+
+.model-option span {
+  font-size: 1rem;
+  line-height: 1.35;
 }
 
 .model-option small {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-size: 0.65rem;
+  font-size: 0.72rem;
 }
 
 .model-option:hover {
   border-color: var(--accent);
+}
+
+.model-settings-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.model-settings-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.model-settings-meta h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: var(--text);
+}
+
+.model-settings-meta p {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+}
+
+.model-settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 1.25rem;
+}
+
+@media (max-width: 900px) {
+  .model-settings-panel {
+    width: 100%;
+    padding: 1.25rem;
+  }
+
+  .model-settings-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .upload-manager {

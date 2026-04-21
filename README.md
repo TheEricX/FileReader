@@ -2,6 +2,20 @@
 
 ExcelFlow is a local AI workspace for spreadsheets and documents. You can upload files, inspect their contents in the browser, and chat with an agent that can analyze data, answer questions, and in the spreadsheet workflow make tool-driven edits.
 
+## Screenshots
+
+### Home Hub
+![ExcelFlow Home Hub](docs/images/home-hub.png)
+
+### Upload Workspace
+![ExcelFlow Upload Workspace](docs/images/excelflow-upload.png)
+
+### Spreadsheet + Chat
+![ExcelFlow Spreadsheet And Chat](docs/images/excelflow-grid-chat.png)
+
+### Range Reference Workflow
+![ExcelFlow Range Reference](docs/images/excelflow-range-reference.png)
+
 ## What It Does
 - Upload and inspect spreadsheets in the browser.
 - Chat with an agent about spreadsheet, PDF, and DOCX content.
