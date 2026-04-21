@@ -39,6 +39,8 @@ frontend/dist/
 
 # Local instructions
 AGENTS.md
+CHANGELOG.md
+SECURITY.md
 
 # Poetry
 pyproject.toml
