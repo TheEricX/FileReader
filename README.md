@@ -157,11 +157,6 @@ uvicorn app.main:app --reload
 - If WebSocket features fail in development, verify `VITE_WS_BASE_URL` or fall back to the default local setup.
 - If uploads do not appear, check `backend/uploads/` permissions and confirm the file format is supported.
 
-## Security
-- Do not commit real credentials.
-- Keep `backend/.env` and `frontend/.env` local only.
-- Review [SECURITY.md](SECURITY.md) before making the repository public.
-
 ## Limitations
 - This repository does not currently include an automated test suite.
 - CORS is permissive in local development and should be tightened for production use.
