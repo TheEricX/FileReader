@@ -21,6 +21,7 @@ ExcelFlow is a local AI workspace for spreadsheets and documents. You can upload
 - Chat with an agent about spreadsheet, PDF, and DOCX content.
 - Use a workspace-first flow with separate `ExcelFlow` and `Gemini` workspaces.
 - Reopen previous uploads from workspace-aware history views.
+- Configure provider-specific model presets and custom model IDs from built-in settings panels.
 - Stream responses over WebSocket while the FastAPI backend handles file processing and model calls.
 
 ## Supported Files
@@ -128,12 +129,13 @@ Local URLs:
 ### ExcelFlow workspace
 - Focused on spreadsheet-first work.
 - Supports spreadsheet uploads plus document-oriented flows exposed by the app.
-- Uses OpenAI or Bedrock-backed model options in the current UI.
+- Includes model settings for OpenAI and Bedrock presets, plus custom model IDs.
 
 ### Gemini workspace
 - Separate workspace with Gemini model options.
 - Supports spreadsheet, PDF, and DOCX analysis.
 - Includes image attachment support for Gemini chat flows.
+- Includes Gemini model settings with presets and custom model IDs.
 
 ## Architecture
 ```text

@@ -7,6 +7,7 @@ import ExcelViewer from './components/ExcelViewer';
 import PdfViewer from './components/PdfViewer';
 import DocViewer from './components/DocViewer';
 import ChatInterface from './components/ChatInterface';
+import ModelSettingsPanel from './components/ModelSettingsPanel';
 import './App.css';
 
 const BASE_MODEL_OPTIONS = [
@@ -1549,131 +1550,27 @@ function App() {
             </aside>
             <div className="upload-content">
               {showSettings ? (
-                <div className="model-settings-panel">
-                  <div className="model-settings-header">
-                    <div>
-                      <h2>Model Settings</h2>
-                      <p>Choose a Gemini model, then customize its parameters.</p>
-                    </div>
-                    <button type="button" onClick={() => setShowSettings(false)}>
-                      Close
-                    </button>
-                  </div>
-                  {!settingsModelId ? (
-                    <div className="model-settings-groups">
-                      {groupedGeminiModelOptions.map((group) => (
-                        <section key={group.id} className="model-settings-group">
-                          <div className="model-settings-group-header">
-                            <h3>{group.title}</h3>
-                            <span>{group.models.length} models</span>
-                          </div>
-                          <div className="model-settings-chooser">
-                            {group.models.map((model) => (
-                              <button
-                                key={model.id}
-                                type="button"
-                                className="model-option"
-                                onClick={() => setSettingsModelId(model.id)}
-                              >
-                                <span>{model.label}</span>
-                                <small>{model.custom ? 'custom' : model.provider}</small>
-                              </button>
-                            ))}
-                          </div>
-                        </section>
-                      ))}
-                    </div>
-                  ) : (
-                    (() => {
-                      const settingsModel = geminiModelOptions.find((model) => model.id === settingsModelId);
-                      const activeSettings = modelParamsByModel[settingsModelId] || defaultModelParams;
-                      return (
-                        <div className="model-settings-detail">
-                          <div className="model-settings-controls">
-                            <button
-                              type="button"
-                              className="model-settings-back"
-                              onClick={() => setSettingsModelId(null)}
-                            >
-                              Back
-                            </button>
-                            <button
-                              type="button"
-                              className="model-settings-reset"
-                              onClick={() =>
-                                setModelParamsByModel((prev) => ({
-                                  ...prev,
-                                  [settingsModelId]: { ...defaultModelParams }
-                                }))
-                              }
-                            >
-                              Reset to default
-                            </button>
-                          </div>
-                          <div className="model-settings-meta">
-                            <div>
-                              <h3>{settingsModel?.label}</h3>
-                              <p>{settingsModel?.custom ? 'Custom Gemini model configuration' : `Provider: ${settingsModel?.provider}`}</p>
-                            </div>
-                          </div>
-                          {settingsModel?.custom && (
-                            <div className="model-setting-row model-setting-row-wide">
-                              <label htmlFor="param-custom-gemini-model-id">Model ID</label>
-                              <input
-                                id="param-custom-gemini-model-id"
-                                type="text"
-                                placeholder="Enter gemini model id"
-                                value={customModelIds[settingsModel.customKey] || ''}
-                                onChange={(event) => handleCustomModelIdChange(settingsModel.customKey, event.target.value)}
-                              />
-                            </div>
-                          )}
-                          <div className="model-settings-form-grid">
-                            <div className="model-setting-row">
-                              <label htmlFor="param-temperature-gemini">Temperature</label>
-                              <input
-                                id="param-temperature-gemini"
-                                type="number"
-                                min="0"
-                                max="2"
-                                step="0.1"
-                                value={activeSettings.temperature}
-                                onChange={(event) => handleParamChange('temperature', event.target.value, 'float')}
-                              />
-                            </div>
-                            <div className="model-setting-row">
-                              <label htmlFor="param-maxTokens-gemini">Max tokens</label>
-                              <input
-                                id="param-maxTokens-gemini"
-                                type="number"
-                                min="256"
-                                max="8192"
-                                step="128"
-                                value={activeSettings.maxTokens}
-                                onChange={(event) => handleParamChange('maxTokens', event.target.value, 'int')}
-                              />
-                            </div>
-                            <div className="model-setting-row">
-                              <label htmlFor="param-topP-gemini">Top P</label>
-                              <input
-                                id="param-topP-gemini"
-                                type="number"
-                                min="0"
-                                max="1"
-                                step="0.05"
-                                value={activeSettings.topP}
-                                onChange={(event) => handleParamChange('topP', event.target.value, 'float')}
-                              />
-                            </div>
-                          </div>
-                          <p className="model-settings-note">
-                            Gemini uses temperature, top_p, and max_output_tokens.
-                          </p>
-                        </div>
-                      );
-                    })()
-                  )}
-                </div>
+                <ModelSettingsPanel
+                  title="Model Settings"
+                  description="Choose a Gemini model, then customize its parameters."
+                  groupedModelOptions={groupedGeminiModelOptions}
+                  modelOptions={geminiModelOptions}
+                  settingsModelId={settingsModelId}
+                  onSelectModel={setSettingsModelId}
+                  onClose={() => setShowSettings(false)}
+                  onBack={() => setSettingsModelId(null)}
+                  onReset={() =>
+                    setModelParamsByModel((prev) => ({
+                      ...prev,
+                      [settingsModelId]: { ...defaultModelParams }
+                    }))
+                  }
+                  currentSettings={modelParamsByModel[settingsModelId] || defaultModelParams}
+                  customModelIds={customModelIds}
+                  onCustomModelIdChange={handleCustomModelIdChange}
+                  onParamChange={handleParamChange}
+                  noteText="Gemini uses temperature, top_p, and max_output_tokens."
+                />
               ) : showUploadManager ? (
                 <div className="upload-manager">
                   <div className="upload-manager-header">
@@ -1976,157 +1873,27 @@ function App() {
             </aside>
             <div className="upload-content">
               {showSettings ? (
-                <div className="model-settings-panel">
-                  <div className="model-settings-header">
-                    <div>
-                      <h2>Model Settings</h2>
-                      <p>Choose a model, then customize its parameters.</p>
-                    </div>
-                    <button type="button" onClick={() => setShowSettings(false)}>
-                      Close
-                    </button>
-                  </div>
-                  {!settingsModelId ? (
-                    <div className="model-settings-groups">
-                      {groupedModelOptions.map((group) => (
-                        <section key={group.id} className="model-settings-group">
-                          <div className="model-settings-group-header">
-                            <h3>{group.title}</h3>
-                            <span>{group.models.length} models</span>
-                          </div>
-                          <div className="model-settings-chooser">
-                            {group.models.map((model) => (
-                              <button
-                                key={model.id}
-                                type="button"
-                                className="model-option"
-                                onClick={() => setSettingsModelId(model.id)}
-                              >
-                                <span>{model.label}</span>
-                                <small>{model.custom ? 'custom' : model.provider}</small>
-                              </button>
-                            ))}
-                          </div>
-                        </section>
-                      ))}
-                    </div>
-                  ) : (
-                    <>
-                      {(() => {
-                        const settingsModel = modelOptions.find((model) => model.id === settingsModelId);
-                        const activeSettings = modelParamsByModel[settingsModelId] || defaultModelParams;
-                        return (
-                          <div className="model-settings-detail">
-                      <div className="model-settings-controls">
-                        <button
-                          type="button"
-                          className="model-settings-back"
-                          onClick={() => setSettingsModelId(null)}
-                        >
-                          Back
-                        </button>
-                        <button
-                          type="button"
-                          className="model-settings-reset"
-                          onClick={() =>
-                            setModelParamsByModel((prev) => ({
-                              ...prev,
-                              [settingsModelId]: { ...defaultModelParams }
-                            }))
-                          }
-                        >
-                          Reset to default
-                        </button>
-                      </div>
-                            <div className="model-settings-meta">
-                              <div>
-                                <h3>{settingsModel?.label}</h3>
-                                <p>{settingsModel?.custom ? 'Custom model configuration' : `Provider: ${settingsModel?.provider}`}</p>
-                              </div>
-                            </div>
-                            {settingsModel?.custom && (
-                              <div className="model-setting-row model-setting-row-wide">
-                                <label htmlFor="param-custom-model-id">Model ID</label>
-                                <input
-                                  id="param-custom-model-id"
-                                  type="text"
-                                  placeholder={`Enter ${settingsModel.provider} model id`}
-                                  value={customModelIds[settingsModel.customKey] || ''}
-                                  onChange={(event) => handleCustomModelIdChange(settingsModel.customKey, event.target.value)}
-                                />
-                              </div>
-                            )}
-                            <div className="model-settings-form-grid">
-                              <div className="model-setting-row">
-                                <label htmlFor="param-temperature">Temperature</label>
-                                <input
-                                  id="param-temperature"
-                                  type="number"
-                                  min="0"
-                                  max="2"
-                                  step="0.1"
-                                  value={activeSettings.temperature}
-                                  onChange={(event) => handleParamChange('temperature', event.target.value, 'float')}
-                                />
-                              </div>
-                              <div className="model-setting-row">
-                                <label htmlFor="param-maxTokens">Max tokens</label>
-                                <input
-                                  id="param-maxTokens"
-                                  type="number"
-                                  min="256"
-                                  max="8192"
-                                  step="128"
-                                  value={activeSettings.maxTokens}
-                                  onChange={(event) => handleParamChange('maxTokens', event.target.value, 'int')}
-                                />
-                              </div>
-                              <div className="model-setting-row">
-                                <label htmlFor="param-topP">Top P</label>
-                                <input
-                                  id="param-topP"
-                                  type="number"
-                                  min="0"
-                                  max="1"
-                                  step="0.05"
-                                  value={activeSettings.topP}
-                                  onChange={(event) => handleParamChange('topP', event.target.value, 'float')}
-                                />
-                              </div>
-                              <div className="model-setting-row">
-                                <label htmlFor="param-presencePenalty">Presence penalty</label>
-                                <input
-                                  id="param-presencePenalty"
-                                  type="number"
-                                  min="-2"
-                                  max="2"
-                                  step="0.1"
-                                  value={activeSettings.presencePenalty}
-                                  onChange={(event) => handleParamChange('presencePenalty', event.target.value, 'float')}
-                                />
-                              </div>
-                              <div className="model-setting-row">
-                                <label htmlFor="param-frequencyPenalty">Frequency penalty</label>
-                                <input
-                                  id="param-frequencyPenalty"
-                                  type="number"
-                                  min="-2"
-                                  max="2"
-                                  step="0.1"
-                                  value={activeSettings.frequencyPenalty}
-                                  onChange={(event) => handleParamChange('frequencyPenalty', event.target.value, 'float')}
-                                />
-                              </div>
-                            </div>
-                            <p className="model-settings-note">
-                              Penalties apply to OpenAI models. Bedrock uses temperature or top_p plus max_tokens.
-                            </p>
-                          </div>
-                        );
-                      })()}
-                    </>
-                  )}
-                </div>
+                <ModelSettingsPanel
+                  title="Model Settings"
+                  description="Choose a model, then customize its parameters."
+                  groupedModelOptions={groupedModelOptions}
+                  modelOptions={modelOptions}
+                  settingsModelId={settingsModelId}
+                  onSelectModel={setSettingsModelId}
+                  onClose={() => setShowSettings(false)}
+                  onBack={() => setSettingsModelId(null)}
+                  onReset={() =>
+                    setModelParamsByModel((prev) => ({
+                      ...prev,
+                      [settingsModelId]: { ...defaultModelParams }
+                    }))
+                  }
+                  currentSettings={modelParamsByModel[settingsModelId] || defaultModelParams}
+                  customModelIds={customModelIds}
+                  onCustomModelIdChange={handleCustomModelIdChange}
+                  onParamChange={handleParamChange}
+                  noteText="Penalties apply to OpenAI models. Bedrock uses temperature or top_p plus max_tokens."
+                />
               ) : showUploadManager ? (
                 <div className="upload-manager">
                 <div className="upload-manager-header">
